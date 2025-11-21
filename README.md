@@ -19,6 +19,7 @@ Create professional, AI-generated videos from a single portrait photo with autom
 - ✅ **Multi-Platform Publishing**: Auto-publish to YouTube, TikTok, Instagram, Facebook, Twitter, LinkedIn
 - ✅ **Platform-Optimized Metadata**: SEO-optimized titles, descriptions, and hashtags for each platform
 - ✅ **Duplicate Content Detection**: Ensures unique content for monetization compliance
+- ✅ **Smart Scheduling**: 5 scheduling strategies based on 2.7B engagement study
 - ✅ **Fully Automated**: Runs end-to-end with only manual review before publishing
 
 ---
@@ -203,12 +204,31 @@ ELEVENLABS_STYLE=0.5           # 0-1 (higher = more expressive)
 ELEVENLABS_USE_SPEAKER_BOOST=true
 ```
 
-### Publishing Settings
+### Scheduling Settings
+
+The system includes **5 research-backed scheduling strategies** based on analyzing 2.7 billion social media engagements:
 
 ```env
+# Scheduling Strategy
+SCHEDULE_STRATEGY=optimal    # Options: optimal, random, manual, smart, immediate
+SCHEDULE_TIMEZONE=UTC        # Your timezone
+SCHEDULE_AVOID_WEEKENDS=false
+SCHEDULE_SPREAD_POSTS=false
+SCHEDULE_MIN_GAP_MINUTES=15
+
+# Auto-Publishing
 AUTO_PUBLISH=false           # Set to true to auto-publish
-SCHEDULE_DELAY_HOURS=0       # Delay before publishing
 ```
+
+**Scheduling Strategies:**
+
+1. **optimal** (Recommended): Research-backed best times for maximum engagement
+2. **random**: Randomize within optimal windows for organic look
+3. **manual**: You specify exact time (`SCHEDULE_MANUAL_TIME=2025-01-25T14:00:00Z`)
+4. **smart**: Optimal times with automatic conflict avoidance
+5. **immediate**: Post ASAP with optional delay
+
+**📖 See [SCHEDULING.md](./SCHEDULING.md) for detailed documentation**
 
 ---
 

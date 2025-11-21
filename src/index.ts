@@ -9,6 +9,7 @@ import { ElevenLabsService } from './services/elevenlabs.service';
 import { FFmpegService } from './services/ffmpeg.service';
 import { DuplicateDetector } from './services/duplicate-detector';
 import { SocialMediaService } from './services/social-media.service';
+import { SchedulerService } from './services/scheduler.service';
 import { VideoGenerationWorkflow } from './workflows/video-generation.workflow';
 import { Platform } from './types';
 
@@ -123,6 +124,9 @@ async function runGeneration(args: string[], logger: Logger) {
       ConfigLoader.getDatabasePath()
     );
     const socialMedia = new SocialMediaService();
+    const scheduler = new SchedulerService(
+      videoConfig.schedulingConfig.timezone || 'UTC'
+    );
 
     console.log('✓ Services initialized');
     console.log('');
@@ -134,7 +138,8 @@ async function runGeneration(args: string[], logger: Logger) {
       elevenlabs,
       ffmpeg,
       duplicateDetector,
-      socialMedia
+      socialMedia,
+      scheduler
     );
 
     // Validate config
@@ -162,6 +167,14 @@ async function runGeneration(args: string[], logger: Logger) {
       console.log(`⏱️  Duration: ${result.duration?.toFixed(2)}s`);
       console.log(`🎬 Segments: ${result.segments}`);
       console.log('');
+
+      if (result.schedules && result.schedules.length > 0) {
+        console.log('📅 Posting Schedule:');
+        result.schedules.forEach((schedule) => {
+          console.log(`  ${scheduler.formatSchedule(schedule)}`);
+        });
+        console.log('');
+      }
 
       if (result.publishResults) {
         console.log('📤 Publishing Status:');

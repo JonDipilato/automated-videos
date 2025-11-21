@@ -26,10 +26,24 @@ export interface CTAConfig {
   duration?: number;
 }
 
+export type ScheduleStrategy = 'optimal' | 'random' | 'manual' | 'smart' | 'immediate';
+
 export interface SchedulingConfig {
   autoPublish: boolean;
-  scheduleTime?: Date;
-  delayHours?: number;
+  strategy: ScheduleStrategy;
+  scheduleTime?: Date; // For manual strategy
+  delayHours?: number; // For immediate strategy
+  timezone?: string; // Timezone (e.g., 'America/New_York', 'UTC')
+  avoidWeekends?: boolean; // Skip weekend posting
+  spreadPosts?: boolean; // Spread posts across multiple days
+  minGapMinutes?: number; // Minimum gap between posts
+}
+
+export interface PlatformSchedule {
+  platform: Platform;
+  scheduledTime: Date;
+  strategy: ScheduleStrategy;
+  reasoning: string;
 }
 
 export interface ScriptGeneration {
@@ -117,6 +131,7 @@ export interface VideoGenerationResult {
   videoPath?: string;
   metadata?: PlatformMetadata[];
   publishResults?: PublishResult[];
+  schedules?: PlatformSchedule[];
   error?: string;
   duration?: number;
   segments?: number;

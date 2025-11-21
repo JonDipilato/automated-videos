@@ -13,6 +13,7 @@ import { ElevenLabsService } from '../services/elevenlabs.service';
 import { FFmpegService } from '../services/ffmpeg.service';
 import { DuplicateDetector } from '../services/duplicate-detector';
 import { SocialMediaService } from '../services/social-media.service';
+import { SchedulerService } from '../services/scheduler.service';
 
 export class VideoGenerationWorkflow {
   private openai: OpenAIService;
@@ -21,6 +22,7 @@ export class VideoGenerationWorkflow {
   private ffmpeg: FFmpegService;
   private duplicateDetector: DuplicateDetector;
   private socialMedia: SocialMediaService;
+  private scheduler: SchedulerService;
   private workDir: string;
 
   constructor(
@@ -30,6 +32,7 @@ export class VideoGenerationWorkflow {
     ffmpeg: FFmpegService,
     duplicateDetector: DuplicateDetector,
     socialMedia: SocialMediaService,
+    scheduler: SchedulerService,
     workDir: string = './output'
   ) {
     this.openai = openai;
@@ -38,6 +41,7 @@ export class VideoGenerationWorkflow {
     this.ffmpeg = ffmpeg;
     this.duplicateDetector = duplicateDetector;
     this.socialMedia = socialMedia;
+    this.scheduler = scheduler;
     this.workDir = workDir;
   }
 
@@ -317,7 +321,43 @@ export class VideoGenerationWorkflow {
       console.log('');
 
       // ========================================
-      // STEP 11: Publish to Social Media
+      // STEP 11: Generate Posting Schedule
+      // ========================================
+      state.currentStep = 'Generating optimal posting schedule';
+      state.progress = 93;
+      this.logProgress(state);
+
+      const schedules = await this.scheduler.schedulePosts(
+        config.targetPlatforms,
+        {
+          strategy: config.schedulingConfig.strategy,
+          timezone: config.schedulingConfig.timezone,
+          manualTime: config.schedulingConfig.scheduleTime,
+          delayHours: config.schedulingConfig.delayHours,
+          avoidWeekends: config.schedulingConfig.avoidWeekends,
+          spreadPosts: config.schedulingConfig.spreadPosts,
+          minGapMinutes: config.schedulingConfig.minGapMinutes,
+        }
+      );
+
+      console.log(`✓ Generated schedule for ${schedules.length} platforms`);
+      console.log('');
+      console.log('📅 Posting Schedule:');
+      schedules.forEach((schedule) => {
+        console.log(`  ${this.scheduler.formatSchedule(schedule)}`);
+      });
+      console.log('');
+
+      // Update metadata with scheduled times
+      finalMetadata.forEach((meta, index) => {
+        const schedule = schedules.find((s) => s.platform === meta.platform);
+        if (schedule) {
+          meta.scheduledTime = schedule.scheduledTime;
+        }
+      });
+
+      // ========================================
+      // STEP 12: Publish to Social Media
       // ========================================
       state.status = 'publishing';
       state.currentStep = 'Publishing to social media platforms';
@@ -387,6 +427,7 @@ export class VideoGenerationWorkflow {
         videoPath: assembledVideo.videoPath,
         metadata: finalMetadata,
         publishResults,
+        schedules,
         duration: assembledVideo.duration,
         segments: audioGeneration.segmentCount,
       };

@@ -76,7 +76,15 @@ export class ConfigLoader {
       },
       schedulingConfig: {
         autoPublish: process.env.AUTO_PUBLISH === 'true',
+        strategy: (process.env.SCHEDULE_STRATEGY as any) || 'optimal',
+        scheduleTime: process.env.SCHEDULE_MANUAL_TIME
+          ? new Date(process.env.SCHEDULE_MANUAL_TIME)
+          : undefined,
         delayHours: parseInt(process.env.SCHEDULE_DELAY_HOURS || '0'),
+        timezone: process.env.SCHEDULE_TIMEZONE || 'UTC',
+        avoidWeekends: process.env.SCHEDULE_AVOID_WEEKENDS === 'true',
+        spreadPosts: process.env.SCHEDULE_SPREAD_POSTS === 'true',
+        minGapMinutes: parseInt(process.env.SCHEDULE_MIN_GAP_MINUTES || '15'),
       },
       outputResolution: parseInt(process.env.OUTPUT_RESOLUTION || '1080'),
       maxVideoLength: parseInt(process.env.MAX_VIDEO_LENGTH || '180'),
