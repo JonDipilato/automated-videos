@@ -74,15 +74,16 @@ async function runGeneration(args: string[], logger: Logger) {
     const seedPortrait = args.find((arg) => arg.startsWith('--portrait='))?.split('=')[1];
     const topic = args.find((arg) => arg.startsWith('--topic='))?.split('=')[1];
     const platformsArg = args.find((arg) => arg.startsWith('--platforms='))?.split('=')[1];
+    const maxLengthArg = args.find((arg) => arg.startsWith('--max-length='))?.split('=')[1];
 
     if (!seedPortrait || !topic) {
       console.error('❌ Missing required arguments');
       console.error('');
       console.error('Usage:');
-      console.error('  npm start generate -- --portrait=<path> --topic="<topic>" [--platforms=youtube,tiktok]');
+      console.error('  npm start generate -- --portrait=<path> --topic="<topic>" [--platforms=youtube,tiktok] [--max-length=14]');
       console.error('');
       console.error('Example:');
-      console.error('  npm start generate -- --portrait=./assets/portraits/me.jpg --topic="5 AI Tips" --platforms=youtube,tiktok,instagram');
+      console.error('  npm start generate -- --portrait=./assets/portraits/me.jpg --topic="5 AI Tips" --platforms=youtube,tiktok,instagram --max-length=14');
       process.exit(1);
     }
 
@@ -90,11 +91,14 @@ async function runGeneration(args: string[], logger: Logger) {
       ? (platformsArg.split(',').map((p) => p.trim()) as Platform[])
       : undefined;
 
+    const maxVideoLength = maxLengthArg ? parseInt(maxLengthArg, 10) : undefined;
+
     // Create video generation config
     const videoConfig = ConfigLoader.createDefaultConfig(
       seedPortrait,
       topic,
-      platforms
+      platforms,
+      maxVideoLength  // Pass CLI argument directly
     );
 
     // Initialize services
@@ -153,6 +157,22 @@ async function runGeneration(args: string[], logger: Logger) {
       console.log('✓ Configuration validated');
       console.log('');
     }
+
+    // Validate video config
+    const videoConfigErrors = ConfigLoader.validateVideoConfig(videoConfig);
+    if (videoConfigErrors.length > 0) {
+      console.error('❌ Video configuration errors:');
+      videoConfigErrors.forEach((error) => console.error(`  - ${error}`));
+      process.exit(1);
+    }
+
+    // Display duration breakdown
+    console.log(`📏 Target video duration: ${videoConfig.maxVideoLength}s`);
+    console.log(`   Segment duration: ${videoConfig.videoSegmentDuration}s`);
+    console.log(`   Intro: ${videoConfig.introDuration || 3}s, Outro: ${videoConfig.outroDuration || 3}s`);
+    const contentDuration = videoConfig.maxVideoLength - (videoConfig.introDuration || 3) - (videoConfig.outroDuration || 3);
+    console.log(`   Content duration: ${contentDuration}s`);
+    console.log('');
 
     // Run generation
     const result = await workflow.generateVideo(videoConfig);

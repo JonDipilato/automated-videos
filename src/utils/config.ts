@@ -55,7 +55,8 @@ export class ConfigLoader {
   static createDefaultConfig(
     seedPortrait: string,
     topic: string,
-    platforms?: Platform[]
+    platforms?: Platform[],
+    maxVideoLength?: number
   ): VideoGenerationConfig {
     return {
       seedPortrait,
@@ -87,7 +88,10 @@ export class ConfigLoader {
         minGapMinutes: parseInt(process.env.SCHEDULE_MIN_GAP_MINUTES || '15'),
       },
       outputResolution: parseInt(process.env.OUTPUT_RESOLUTION || '1080'),
-      maxVideoLength: parseInt(process.env.MAX_VIDEO_LENGTH || '180'),
+      // Priority: CLI arg > ENV var > Default (60s for short-form social media)
+      maxVideoLength: maxVideoLength ?? parseInt(process.env.MAX_VIDEO_LENGTH || '60'),
+      introDuration: parseInt(process.env.INTRO_DURATION || '3'),
+      outroDuration: parseInt(process.env.OUTRO_DURATION || '3'),
     };
   }
 
@@ -111,6 +115,42 @@ export class ConfigLoader {
 
     if (!config.elevenlabs.voiceId) {
       errors.push('ELEVENLABS_VOICE_ID is required');
+    }
+
+    return errors;
+  }
+
+  /**
+   * Validates video generation config for duration constraints
+   */
+  static validateVideoConfig(config: VideoGenerationConfig): string[] {
+    const errors: string[] = [];
+
+    if (config.maxVideoLength <= 0) {
+      errors.push('maxVideoLength must be greater than 0');
+    }
+
+    if (config.videoSegmentDuration <= 0) {
+      errors.push('videoSegmentDuration must be greater than 0');
+    }
+
+    if (config.maxVideoLength < 10) {
+      errors.push(
+        `maxVideoLength (${config.maxVideoLength}s) is very short. ` +
+        `Minimum recommended: 10s`
+      );
+    }
+
+    const introDuration = config.introDuration || 3;
+    const outroDuration = config.outroDuration || 3;
+    const totalStaticDuration = introDuration + outroDuration;
+
+    if (totalStaticDuration >= config.maxVideoLength) {
+      errors.push(
+        `Intro (${introDuration}s) + Outro (${outroDuration}s) = ${totalStaticDuration}s ` +
+        `exceeds or equals maxVideoLength (${config.maxVideoLength}s). ` +
+        `No content duration remaining!`
+      );
     }
 
     return errors;

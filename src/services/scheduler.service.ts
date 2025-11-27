@@ -326,7 +326,7 @@ export class SchedulerService {
     } else {
       // Find next best day
       const nextBestDay = this.findNextBestDay(currentDay, platformTimes.bestDays);
-      targetDate = nextDay(targetDate, nextBestDay);
+      targetDate = nextDay(targetDate, nextBestDay as 0 | 1 | 2 | 3 | 4 | 5 | 6);
     }
 
     // Get time windows for the day
@@ -365,7 +365,7 @@ export class SchedulerService {
     const randomDay = allGoodDays[Math.floor(Math.random() * allGoodDays.length)];
 
     if (targetDate.getDay() !== randomDay) {
-      targetDate = nextDay(targetDate, randomDay);
+      targetDate = nextDay(targetDate, randomDay as 0 | 1 | 2 | 3 | 4 | 5 | 6);
     }
 
     // Random time window

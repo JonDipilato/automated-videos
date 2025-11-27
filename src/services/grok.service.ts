@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import FormData from 'form-data';
 import { GrokImageResponse, GrokVideoResponse, GrokPrompt } from '../types';
+import { KieService } from './kie.service';
 
 export class GrokService {
   private client: AxiosInstance;
@@ -10,6 +11,7 @@ export class GrokService {
   private baseUrl: string;
   private videoModel: string;
   private imageModel: string;
+  private kieService: KieService;
 
   constructor(
     apiKey: string,
@@ -30,10 +32,14 @@ export class GrokService {
       },
       timeout: 120000, // 2 minutes
     });
+
+    // Initialize KIE service for video generation
+    const kieApiKey = process.env.KIE_API_KEY || '';
+    this.kieService = new KieService(kieApiKey);
   }
 
   /**
-   * Generates a high-quality background image using Grok
+   * Generates a high-quality background image using OpenAI DALL-E 3
    */
   async generateBackground(
     prompt: string,
@@ -41,81 +47,53 @@ export class GrokService {
     height: number = 1080
   ): Promise<GrokImageResponse> {
     try {
-      const response = await this.client.post('/images/generations', {
-        model: this.imageModel,
-        prompt: this.enhanceBackgroundPrompt(prompt),
-        n: 1,
-        size: `${width}x${height}`,
-        quality: 'hd',
-        style: 'natural',
-      });
+      // Use OpenAI DALL-E 3 for image generation
+      // Note: DALL-E 3 supports specific sizes: 1024x1024, 1792x1024, or 1024x1792
+      const size = width > height ? '1792x1024' : (width < height ? '1024x1792' : '1024x1024');
+
+      const response = await axios.post(
+        'https://api.openai.com/v1/images/generations',
+        {
+          model: 'dall-e-3',
+          prompt: this.enhanceBackgroundPrompt(prompt),
+          n: 1,
+          size: size,
+          quality: 'hd',
+          style: 'natural',
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 120000,
+        }
+      );
 
       const imageData = response.data.data[0];
 
       return {
         imageUrl: imageData.url,
         prompt: prompt,
-        seed: imageData.seed,
-        dimensions: { width, height },
+        seed: undefined,
+        dimensions: { width: parseInt(size.split('x')[0]), height: parseInt(size.split('x')[1]) },
       };
     } catch (error) {
-      console.error('Grok background generation failed:', error);
+      console.error('OpenAI DALL-E background generation failed:', error);
       throw new Error(`Failed to generate background: ${error}`);
     }
   }
 
   /**
-   * Generates a 7-second video using seed portrait image
+   * Generates a 7-second video using KIE.AI (Grok Imagine image-to-video)
    */
   async generateVideo(
     grokPrompt: GrokPrompt,
     seedImagePath: string,
     outputDir: string
   ): Promise<GrokVideoResponse> {
-    try {
-      // Step 1: Upload seed image
-      const imageId = await this.uploadSeedImage(seedImagePath);
-
-      // Step 2: Create video generation request
-      const response = await this.client.post('/videos/generations', {
-        model: this.videoModel,
-        prompt: this.enhanceVideoPrompt(grokPrompt.videoPrompt),
-        seed_image_id: imageId,
-        duration: grokPrompt.duration,
-        aspect_ratio: '9:16', // Vertical format for social media
-        motion_intensity: 'medium',
-        quality: 'high',
-      });
-
-      const videoId = response.data.id;
-
-      // Step 3: Poll for completion
-      const videoUrl = await this.pollVideoCompletion(videoId);
-
-      // Step 4: Download video
-      const videoPath = await this.downloadVideo(
-        videoUrl,
-        outputDir,
-        `segment_${grokPrompt.segmentIndex}.mp4`
-      );
-
-      return {
-        videoUrl: videoPath,
-        prompt: grokPrompt.videoPrompt,
-        duration: grokPrompt.duration,
-        seedImage: seedImagePath,
-        status: 'completed',
-      };
-    } catch (error) {
-      console.error('Grok video generation failed:', error);
-      return {
-        videoUrl: '',
-        prompt: grokPrompt.videoPrompt,
-        duration: grokPrompt.duration,
-        seedImage: seedImagePath,
-        status: 'failed',
-      };
-    }
+    // Use KIE.AI service for actual video generation
+    return await this.kieService.generateVideo(grokPrompt, seedImagePath, outputDir);
   }
 
   /**

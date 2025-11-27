@@ -8,7 +8,9 @@ export interface VideoGenerationConfig {
   ctaConfig: CTAConfig;
   schedulingConfig: SchedulingConfig;
   outputResolution: number;
-  maxVideoLength?: number;
+  maxVideoLength: number;  // Required - must be explicitly set
+  introDuration?: number;  // Optional, defaults to 3s
+  outroDuration?: number;  // Optional, defaults to 3s
 }
 
 export type Platform =
@@ -149,7 +151,7 @@ export interface GrokImageResponse {
 
 export interface GrokVideoResponse {
   videoUrl: string;
-  prompt: string;
+  prompt: GrokPrompt;
   duration: number;
   seedImage: string;
   status: 'processing' | 'completed' | 'failed';

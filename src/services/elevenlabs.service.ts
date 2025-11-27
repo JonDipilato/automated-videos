@@ -44,11 +44,43 @@ export class ElevenLabsService {
     try {
       console.log('🎤 Generating audio narration (Audio-First Approach)...');
 
+      // Extract plain text if script is in timestamped format
+      let textToSpeak = script;
+      try {
+        // Check if script is already an object/array or needs parsing
+        let parsed = typeof script === 'string' ? JSON.parse(script) : script;
+
+        if (Array.isArray(parsed)) {
+          if (typeof parsed[0] === 'string') {
+            // Handle array of strings with embedded timestamps: "[0:00-0:03] \"text\""
+            textToSpeak = parsed.map((str: string) => {
+              // Remove timestamp pattern [HH:MM-HH:MM] and extract quoted text
+              return str.replace(/^\[[\d:]+\-[\d:]+\]\s*"(.+)"$/, '$1').replace(/\\"/g, '"');
+            }).join(' ');
+          } else {
+            // Handle array of objects with text/content fields
+            textToSpeak = parsed.map((segment: any) => segment.text || segment.content || '').join(' ');
+          }
+          console.log('  ↳ Extracted text from timestamped script');
+        } else if (typeof parsed === 'object' && parsed !== null) {
+          // Handle object with time-range keys: {"0-3s": "text", "4-30s": "text"}
+          // or nested objects: {"text": {"0-3s": "text"}}
+          if (parsed.text && typeof parsed.text === 'object') {
+            textToSpeak = Object.values(parsed.text).join(' ');
+          } else {
+            textToSpeak = Object.values(parsed).filter(v => typeof v === 'string').join(' ');
+          }
+          console.log('  ↳ Extracted text from object-based script format');
+        }
+      } catch (e) {
+        // Script is already plain text, use as-is
+      }
+
       // Generate the audio
       const response = await this.client.post(
         `/text-to-speech/${this.voiceId}`,
         {
-          text: script,
+          text: textToSpeak,
           model_id: 'eleven_multilingual_v2',
           voice_settings: {
             stability: this.voiceSettings.stability,

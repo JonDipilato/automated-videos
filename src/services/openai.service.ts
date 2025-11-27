@@ -20,13 +20,28 @@ export class OpenAIService {
    */
   async generateScript(
     topic: string,
-    targetDuration: number = 60
+    targetDuration: number,
+    segmentDuration: number = 7
   ): Promise<ScriptGeneration> {
+    // Calculate target word count for TTS
+    // Calibrated for 6-7s video segments: ~95 WPM target, 110 WPM max
+    const targetMinutes = targetDuration / 60;
+    const targetWordCount = Math.floor(targetMinutes * 95);  // 95 WPM (calibrated for 6.5s avg)
+    const maxWordCount = Math.floor(targetMinutes * 110);    // Upper limit at 110 WPM
+
+    console.log(`  ↳ Target duration: ${targetDuration}s → ${targetWordCount}-${maxWordCount} words (95-110 WPM)`);
+
     const systemPrompt = `You are an expert scriptwriter for short-form video content.
 Create engaging, hook-driven scripts optimized for social media platforms.
-The script should be conversational, dynamic, and designed for AI voice narration.`;
+The script should be conversational, dynamic, and designed for AI voice narration.
+CRITICAL: You MUST strictly adhere to the word count limit provided.`;
 
     const userPrompt = `Create a compelling ${targetDuration}-second video script about: "${topic}"
+
+CRITICAL CONSTRAINT - WORD COUNT:
+- Target: ${targetWordCount} words (STRICT LIMIT)
+- Maximum: ${maxWordCount} words (DO NOT EXCEED)
+- This ensures the script takes exactly ${targetDuration} seconds when spoken at natural pace
 
 Requirements:
 1. Start with a strong hook (first 3 seconds)
@@ -35,9 +50,10 @@ Requirements:
 4. Break into clear segments for visual changes
 5. End with a strong call-to-action hint
 6. Optimize for AI voice narration (clear pronunciation)
+7. STAY WITHIN THE WORD COUNT LIMIT - this is the most important requirement
 
 Provide:
-1. Full script with timing markers
+1. Full script with timing markers (MUST be within word count)
 2. Story outline with key points
 3. Tone description
 4. Estimated duration per segment
@@ -60,12 +76,99 @@ Format as JSON with fields: script, storyOutline, keyPoints (array), tone, estim
     }
 
     const result = JSON.parse(content);
+
+    // ENFORCE word count limit for accurate TTS duration
+    let finalScript = result.script;
+
+    // Extract text and count words
+    const extractTextFromScript = (script: any): string => {
+      if (typeof script === 'string') {
+        try {
+          const parsed = JSON.parse(script);
+          return extractTextFromScript(parsed);
+        } catch {
+          return script;
+        }
+      } else if (Array.isArray(script)) {
+        return script.map((item: any) => {
+          if (typeof item === 'string') return item;
+          return item.text || item.content || '';
+        }).join(' ');
+      } else if (typeof script === 'object' && script !== null) {
+        if (script.text && typeof script.text === 'object') {
+          return Object.values(script.text).filter(v => typeof v === 'string').join(' ');
+        }
+        return Object.values(script).filter(v => typeof v === 'string').join(' ');
+      }
+      return String(script);
+    };
+
+    const scriptText = extractTextFromScript(finalScript);
+    const words = scriptText.trim().split(/\s+/);
+    const actualWordCount = words.length;
+
+    console.log(`  ↳ Generated script: ${actualWordCount} words (target: ${targetWordCount}, max: ${maxWordCount})`);
+
+    // Truncate words if over limit
+    if (actualWordCount > maxWordCount) {
+      console.log(`  ↳ ENFORCING word count: Truncating from ${actualWordCount} to ${maxWordCount} words`);
+      const truncatedText = words.slice(0, maxWordCount).join(' ');
+
+      // Rebuild script in simple string format (most reliable for TTS)
+      finalScript = truncatedText;
+    }
+
+    // HARD ENFORCE duration limit by truncating script segments
+    if (typeof finalScript === 'string') {
+      try {
+        const parsed = JSON.parse(finalScript);
+
+        // Calculate target segments based on segment duration
+        const targetSegments = Math.ceil(targetDuration / segmentDuration);
+
+        if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'object') {
+          // Handle array format: [{time: "0:00-0:03", text: "..."}, ...]
+          if (parsed.length > targetSegments) {
+            console.log(`  ↳ ENFORCING duration: Truncating script from ${parsed.length} to ${targetSegments} segments`);
+            finalScript = JSON.stringify(parsed.slice(0, targetSegments));
+          }
+        } else if (typeof parsed === 'object' && !Array.isArray(parsed)) {
+          // Handle object-with-time-keys format: {"0-3s": "text", "4-30s": "text"}
+          if (parsed.text && typeof parsed.text === 'object') {
+            // Nested format: {"text": {"0-3s": "...", "4-30s": "..."}}
+            const timeKeys = Object.keys(parsed.text);
+            if (timeKeys.length > targetSegments) {
+              console.log(`  ↳ ENFORCING duration: Truncating script from ${timeKeys.length} to ${targetSegments} segments`);
+              const truncatedText: any = {};
+              timeKeys.slice(0, targetSegments).forEach(key => {
+                truncatedText[key] = parsed.text[key];
+              });
+              finalScript = JSON.stringify({ ...parsed, text: truncatedText });
+            }
+          } else {
+            // Direct format: {"0-3s": "...", "4-30s": "..."}
+            const timeKeys = Object.keys(parsed).filter(k => typeof parsed[k] === 'string');
+            if (timeKeys.length > targetSegments) {
+              console.log(`  ↳ ENFORCING duration: Truncating script from ${timeKeys.length} to ${targetSegments} segments`);
+              const truncated: any = {};
+              timeKeys.slice(0, targetSegments).forEach(key => {
+                truncated[key] = parsed[key];
+              });
+              finalScript = JSON.stringify(truncated);
+            }
+          }
+        }
+      } catch (e) {
+        // Script is plain text, use as-is
+      }
+    }
+
     return {
-      script: result.script,
+      script: finalScript,
       storyOutline: result.storyOutline,
       keyPoints: result.keyPoints,
       tone: result.tone,
-      estimatedDuration: result.estimatedDuration,
+      estimatedDuration: targetDuration, // Use actual target, not AI's estimate
     };
   }
 
@@ -75,7 +178,8 @@ Format as JSON with fields: script, storyOutline, keyPoints (array), tone, estim
   async generateGrokPrompts(
     scriptGeneration: ScriptGeneration,
     segmentCount: number,
-    seedPortraitDescription: string
+    seedPortraitDescription: string,
+    segmentDuration: number = 7
   ): Promise<GrokPrompt[]> {
     const systemPrompt = `You are an expert at creating prompts for Grok's image and video generation AI.
 Create highly detailed, visually descriptive prompts that produce cinematic, professional results.
@@ -90,7 +194,7 @@ Tone: ${scriptGeneration.tone}
 Portrait Description: ${seedPortraitDescription}
 
 For EACH segment, provide:
-1. videoPrompt: Detailed prompt for generating a 7-second video with the portrait as seed
+1. videoPrompt: Detailed prompt for generating a ${segmentDuration}-second video with the portrait as seed
    - Include specific actions, expressions, lighting, camera movement
    - Maintain consistency with the portrait
    - Match the script's mood and timing
@@ -102,7 +206,7 @@ For EACH segment, provide:
    - Should seamlessly blend with the portrait
 
 3. transitionType: Choose from 'crossfade', 'morph', 'zoom', 'pan'
-4. duration: 7 seconds per segment
+4. duration: ${segmentDuration} seconds per segment
 
 Make each segment visually distinct but narratively cohesive.
 Ensure smooth visual flow between segments.

@@ -9,6 +9,7 @@
     "dev": "ts-node src/index.ts",
     "generate": "ts-node src/index.ts generate",
     "test": "jest",
+    "test:timing": "ts-node test-timing.ts",
     "lint": "eslint src/**/*.ts",
     "format": "prettier --write \"src/**/*.ts\""
   },
@@ -37,8 +38,7 @@
     "sqlite3": "^5.1.7",
     "googleapis": "^144.0.0",
     "fb": "^2.0.0",
-    "twitter-api-v2": "^1.17.2",
-    "linkedin-api-client": "^1.0.0"
+    "twitter-api-v2": "^1.17.2"
   },
   "devDependencies": {
     "@types/node": "^22.7.7",

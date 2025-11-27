@@ -85,9 +85,25 @@ export class VideoGenerationWorkflow {
       state.progress = 10;
       this.logProgress(state);
 
+      // Calculate actual content duration (excluding intro/outro)
+      const introDuration = config.introDuration || 3;
+      const outroDuration = config.outroDuration || 3;
+      const contentDuration = Math.max(
+        1,
+        config.maxVideoLength - introDuration - outroDuration
+      );
+
+      console.log(`📊 Duration breakdown:`);
+      console.log(`   Intro: ${introDuration}s`);
+      console.log(`   Content: ${contentDuration}s`);
+      console.log(`   Outro: ${outroDuration}s`);
+      console.log(`   Total target: ${config.maxVideoLength}s`);
+      console.log('');
+
       const scriptGeneration = await this.openai.generateScript(
         config.topic,
-        config.maxVideoLength || 60
+        contentDuration,              // Use content duration only
+        config.videoSegmentDuration   // Pass segment duration
       );
 
       console.log(`✓ Script generated (${scriptGeneration.estimatedDuration}s estimated)`);
@@ -111,6 +127,24 @@ export class VideoGenerationWorkflow {
       console.log(`✓ Audio generated: ${audioGeneration.duration.toFixed(2)}s`);
       console.log(`✓ Video segments needed: ${audioGeneration.segmentCount}`);
       console.log('');
+
+      // Validate audio duration against target
+      const totalTargetDuration = config.maxVideoLength;
+      const audioWithMargins = audioGeneration.duration + introDuration + outroDuration;
+
+      if (Math.abs(audioWithMargins - totalTargetDuration) > 5) {
+        console.log('');
+        console.log('⚠️  DURATION NOTICE:');
+        console.log(`   Target total: ${totalTargetDuration}s`);
+        console.log(`   Actual total: ${audioWithMargins.toFixed(2)}s`);
+        console.log(`   Audio only: ${audioGeneration.duration.toFixed(2)}s`);
+        console.log(`   Difference: ${(audioWithMargins - totalTargetDuration).toFixed(2)}s`);
+
+        if (audioWithMargins > totalTargetDuration + 10) {
+          console.log('   Consider increasing --max-length or using a more concise topic');
+        }
+        console.log('');
+      }
 
       // ========================================
       // STEP 3: Check for Duplicate Content
@@ -152,7 +186,8 @@ export class VideoGenerationWorkflow {
       const grokPrompts = await this.openai.generateGrokPrompts(
         scriptGeneration,
         audioGeneration.segmentCount,
-        portraitDescription
+        portraitDescription,
+        config.videoSegmentDuration  // Add segment duration
       );
 
       console.log(`✓ Generated ${grokPrompts.length} Grok prompts`);
@@ -220,7 +255,7 @@ export class VideoGenerationWorkflow {
         await this.ffmpeg.createIntroWithBackground(
           config.seedPortrait,
           firstBg,
-          3, // 3 second intro
+          config.introDuration || 3,
           introPath
         );
       }
@@ -229,7 +264,7 @@ export class VideoGenerationWorkflow {
         await this.ffmpeg.createOutroWithBackground(
           config.seedPortrait,
           lastBg,
-          3, // 3 second outro
+          config.outroDuration || 3,
           outroPath
         );
       }
