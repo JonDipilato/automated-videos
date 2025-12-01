@@ -90,10 +90,11 @@ export class GrokService {
   async generateVideo(
     grokPrompt: GrokPrompt,
     seedImagePath: string,
-    outputDir: string
+    outputDir: string,
+    forceUpload: boolean = false
   ): Promise<GrokVideoResponse> {
     // Use KIE.AI service for actual video generation
-    return await this.kieService.generateVideo(grokPrompt, seedImagePath, outputDir);
+    return await this.kieService.generateVideo(grokPrompt, seedImagePath, outputDir, forceUpload);
   }
 
   /**
@@ -124,6 +125,69 @@ export class GrokService {
       }
       return results;
     }
+  }
+
+  /**
+   * Generates video segments with frame chaining for perfect continuity
+   * Each segment uses the last frame of the previous segment as its seed
+   */
+  async generateVideoSegmentsWithFrameChaining(
+    grokPrompts: GrokPrompt[],
+    initialSeedImagePath: string,
+    outputDir: string,
+    ffmpegExtractLastFrame: (videoPath: string, outputPath: string) => Promise<string>
+  ): Promise<GrokVideoResponse[]> {
+    const results: GrokVideoResponse[] = [];
+    let currentSeedPath = initialSeedImagePath;
+
+    console.log('🔗 Generating segments with frame chaining for perfect continuity...');
+
+    for (let i = 0; i < grokPrompts.length; i++) {
+      const prompt = grokPrompts[i];
+
+      console.log(`\n📹 Segment ${i + 1}/${grokPrompts.length}:`);
+      console.log(`   Using seed: ${path.basename(currentSeedPath)}`);
+      if (prompt.continuityNote) {
+        console.log(`   Continuity: ${prompt.continuityNote}`);
+      }
+
+      // For first segment: use pre-hosted URL if available
+      // For subsequent segments: force upload of extracted transition frames
+      const forceUpload = i > 0;
+
+      // Generate video segment using current seed
+      const result = await this.generateVideo(
+        prompt,
+        currentSeedPath,
+        outputDir,
+        forceUpload
+      );
+      results.push(result);
+
+      // If successful and not the last segment, extract last frame for next segment
+      if (result.status === 'completed' && i < grokPrompts.length - 1) {
+        try {
+          const lastFramePath = path.join(
+            outputDir,
+            `../images/transition_frame_${i}.png`
+          );
+
+          // Extract last frame from this video to use as seed for next
+          await ffmpegExtractLastFrame(result.videoUrl, lastFramePath);
+
+          // Update seed for next iteration
+          currentSeedPath = lastFramePath;
+
+          console.log(`   ✓ Frame chained to next segment`);
+        } catch (error) {
+          console.warn(`   ⚠️  Frame extraction failed, using original seed for next segment`);
+          // Continue with original seed if extraction fails
+        }
+      }
+    }
+
+    console.log('\n✓ Frame-chained generation complete!');
+    return results;
   }
 
   /**

@@ -10,6 +10,7 @@ import { FFmpegService } from './services/ffmpeg.service';
 import { DuplicateDetector } from './services/duplicate-detector';
 import { SocialMediaService } from './services/social-media.service';
 import { SchedulerService } from './services/scheduler.service';
+import { CaptionsService } from './services/captions.service';
 import { VideoGenerationWorkflow } from './workflows/video-generation.workflow';
 import { Platform } from './types';
 
@@ -70,20 +71,34 @@ async function runGeneration(args: string[], logger: Logger) {
       process.exit(1);
     }
 
-    // Parse arguments
-    const seedPortrait = args.find((arg) => arg.startsWith('--portrait='))?.split('=')[1];
-    const topic = args.find((arg) => arg.startsWith('--topic='))?.split('=')[1];
-    const platformsArg = args.find((arg) => arg.startsWith('--platforms='))?.split('=')[1];
-    const maxLengthArg = args.find((arg) => arg.startsWith('--max-length='))?.split('=')[1];
+    // Parse arguments (supports both --arg=value and --arg value syntax)
+    const parseArg = (argName: string): string | undefined => {
+      // Try --arg=value format first
+      const withEquals = args.find((arg) => arg.startsWith(`${argName}=`))?.split('=')[1];
+      if (withEquals) return withEquals;
+
+      // Fallback to --arg value format
+      const index = args.indexOf(argName);
+      if (index !== -1 && index + 1 < args.length) {
+        return args[index + 1];
+      }
+
+      return undefined;
+    };
+
+    const seedPortrait = parseArg('--portrait');
+    const topic = parseArg('--topic');
+    const platformsArg = parseArg('--platforms');
+    const maxLengthArg = parseArg('--max-length');
 
     if (!seedPortrait || !topic) {
       console.error('❌ Missing required arguments');
       console.error('');
       console.error('Usage:');
-      console.error('  npm start generate -- --portrait=<path> --topic="<topic>" [--platforms=youtube,tiktok] [--max-length=14]');
+      console.error('  npm start generate -- --portrait <path> --topic <topic> [--platforms <list>] [--max-length <seconds>]');
       console.error('');
       console.error('Example:');
-      console.error('  npm start generate -- --portrait=./assets/portraits/me.jpg --topic="5 AI Tips" --platforms=youtube,tiktok,instagram --max-length=14');
+      console.error('  npm start generate -- --portrait "./assets/portraits/me.jpg" --topic "5 AI Tips" --platforms youtube,tiktok,instagram --max-length 14');
       process.exit(1);
     }
 
@@ -131,6 +146,7 @@ async function runGeneration(args: string[], logger: Logger) {
     const scheduler = new SchedulerService(
       videoConfig.schedulingConfig.timezone || 'UTC'
     );
+    const captions = new CaptionsService(config.openai.apiKey);
 
     console.log('✓ Services initialized');
     console.log('');
@@ -143,7 +159,8 @@ async function runGeneration(args: string[], logger: Logger) {
       ffmpeg,
       duplicateDetector,
       socialMedia,
-      scheduler
+      scheduler,
+      captions
     );
 
     // Validate config
@@ -302,14 +319,15 @@ function printHelp() {
   console.log('  help          Show this help message');
   console.log('');
   console.log('GENERATE OPTIONS:');
-  console.log('  --portrait=<path>         Path to seed portrait image (required)');
-  console.log('  --topic="<text>"          Video topic/theme (required)');
-  console.log('  --platforms=<list>        Comma-separated platforms (optional)');
+  console.log('  --portrait <path>         Path to seed portrait image (required)');
+  console.log('  --topic <text>            Video topic/theme (required)');
+  console.log('  --platforms <list>        Comma-separated platforms (optional)');
   console.log('                            Options: youtube,tiktok,instagram,facebook,twitter,linkedin');
+  console.log('  --max-length <seconds>    Maximum video length in seconds (optional, default: 60s)');
   console.log('');
   console.log('EXAMPLES:');
-  console.log('  # Generate video for YouTube and TikTok');
-  console.log('  npm start generate -- --portrait=./assets/portraits/me.jpg --topic="5 AI Tips" --platforms=youtube,tiktok');
+  console.log('  # Generate 14-second video for YouTube and TikTok');
+  console.log('  npm start generate -- --portrait "./assets/portraits/me.jpg" --topic "5 AI Tips" --platforms youtube,tiktok --max-length 14');
   console.log('');
   console.log('  # Validate configuration');
   console.log('  npm start validate');

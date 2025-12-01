@@ -2,6 +2,7 @@ import axios, { AxiosInstance } from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
 import { GrokVideoResponse, GrokPrompt } from '../types';
+import { GCSStorageService } from './gcs-storage.service';
 
 /**
  * KIE.AI Service for Grok Imagine Image-to-Video generation
@@ -11,6 +12,7 @@ export class KieService {
   private client: AxiosInstance;
   private apiKey: string;
   private baseUrl: string = 'https://api.kie.ai/api/v1/jobs';
+  private gcsStorage: GCSStorageService;
 
   constructor(apiKey: string) {
     this.apiKey = apiKey;
@@ -23,28 +25,34 @@ export class KieService {
       },
       timeout: 180000, // 3 minutes for video generation
     });
+
+    // Initialize GCS storage for frame uploads
+    this.gcsStorage = new GCSStorageService();
   }
 
   /**
    * Generates a video from an image using Grok Imagine
+   * @param forceUpload - Force upload of the seed image even if PORTRAIT_URL is set (for transition frames)
    */
   async generateVideo(
     grokPrompt: GrokPrompt,
     seedImagePath: string,
-    outputDir: string
+    outputDir: string,
+    forceUpload: boolean = false
   ): Promise<GrokVideoResponse> {
     try {
       // Step 1: Get image URL
-      // Check if user provided a pre-hosted URL in environment
-      let imageUrl = process.env.PORTRAIT_URL;
+      let imageUrl: string;
 
-      if (!imageUrl) {
-        // Upload image to get a public URL
-        imageUrl = await this.uploadImageToTemp(seedImagePath);
-      } else {
+      // For first segment, use pre-hosted URL if available
+      // For subsequent segments (transition frames), always upload
+      if (!forceUpload && process.env.PORTRAIT_URL) {
         // Convert Google Drive viewer URL to direct download URL if needed
-        imageUrl = this.convertToDirectUrl(imageUrl);
+        imageUrl = this.convertToDirectUrl(process.env.PORTRAIT_URL);
         console.log(`  ↳ Using pre-hosted portrait: ${imageUrl}`);
+      } else {
+        // Upload image to get a public URL (for transition frames or if no env URL)
+        imageUrl = await this.uploadImageToTemp(seedImagePath);
       }
 
       // Step 2: Create video generation task
@@ -92,12 +100,13 @@ export class KieService {
     grokPrompts: GrokPrompt[],
     seedImagePath: string,
     outputDir: string,
-    parallel: boolean = true
+    parallel: boolean = true,
+    forceUpload: boolean = false
   ): Promise<GrokVideoResponse[]> {
     if (parallel) {
       // Generate all segments in parallel for speed
       const promises = grokPrompts.map((prompt) =>
-        this.generateVideo(prompt, seedImagePath, outputDir)
+        this.generateVideo(prompt, seedImagePath, outputDir, forceUpload)
       );
       return await Promise.all(promises);
     } else {
@@ -107,7 +116,8 @@ export class KieService {
         const result = await this.generateVideo(
           prompt,
           seedImagePath,
-          outputDir
+          outputDir,
+          forceUpload
         );
         results.push(result);
       }
@@ -216,40 +226,22 @@ export class KieService {
   }
 
   /**
-   * Uploads image to imgbb and returns public URL
-   * Using imgbb free tier - no API key required with anonymous upload
+   * Uploads image to Google Cloud Storage and returns public URL
    */
   private async uploadImageToTemp(imagePath: string): Promise<string> {
     try {
-      const FormData = require('form-data');
-      const formData = new FormData();
+      // Generate unique filename with timestamp
+      const timestamp = Date.now();
+      const originalName = path.basename(imagePath);
+      const remoteFileName = `${timestamp}_${originalName}`;
 
-      // Read image and convert to base64
-      const imageBuffer = fs.readFileSync(imagePath);
-      const base64Image = imageBuffer.toString('base64');
+      // Upload to GCS
+      const publicUrl = await this.gcsStorage.uploadImage(imagePath, remoteFileName);
 
-      formData.append('image', base64Image);
-
-      // Use imgbb free anonymous upload
-      // Note: For production, get an API key from imgbb.com
-      const response = await axios.post('https://api.imgbb.com/1/upload', formData, {
-        params: {
-          key: 'a1d2bc3f4e5f6a7b8c9d0e1f2a3b4c5d' // Free tier key (replace with your own)
-        },
-        headers: formData.getHeaders(),
-        timeout: 30000
-      });
-
-      if (response.data.success) {
-        const imageUrl = response.data.data.url;
-        console.log(`  ↳ Image uploaded: ${imageUrl}`);
-        return imageUrl;
-      } else {
-        throw new Error('Image upload failed');
-      }
+      return publicUrl;
     } catch (error) {
-      console.error('Image upload to imgbb failed:', error);
-      throw new Error(`Failed to upload image: ${error}`);
+      console.error('Image upload to GCS failed:', error);
+      throw new Error(`Failed to upload image to GCS: ${error}`);
     }
   }
 
@@ -274,10 +266,28 @@ export class KieService {
    */
   private enhanceVideoPrompt(prompt: string): string {
     // KIE.AI works better with simple, action-focused prompts
-    // Extract key actions and simplify
-    // Remove complex cinematography jargon that might confuse the API
+    // Remove complex cinematography jargon and keep core actions
 
-    // For now, keep it very simple - just basic motion
-    return "Person speaking to camera with natural expressions and subtle head movements";
+    // Clean up technical terms that KIE might not understand well
+    let simplified = prompt
+      .replace(/cinematic|cinematography|composition/gi, '')
+      .replace(/golden hour|dramatic lighting|soft lighting/gi, 'natural lighting')
+      .replace(/\b(shot|frame|camera)\b/gi, '')
+      .replace(/\b(close-up|medium shot|wide shot|establishing shot)\b/gi, 'view')
+      .replace(/\bdepth of field\b/gi, '')
+      .replace(/\b(rack focus|dolly|crane|steadicam)\b/gi, 'movement')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    // Keep it concise - KIE prefers 1-2 sentences max
+    const sentences = simplified.split(/[.!?]+/).filter(s => s.trim().length > 0);
+    simplified = sentences.slice(0, 2).join('. ').trim();
+
+    // If still too long or empty, use a reasonable default
+    if (!simplified || simplified.length < 10) {
+      simplified = "Person speaking with natural expressions and subtle movements";
+    }
+
+    return simplified;
   }
 }

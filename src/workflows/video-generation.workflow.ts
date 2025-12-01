@@ -14,6 +14,7 @@ import { FFmpegService } from '../services/ffmpeg.service';
 import { DuplicateDetector } from '../services/duplicate-detector';
 import { SocialMediaService } from '../services/social-media.service';
 import { SchedulerService } from '../services/scheduler.service';
+import { CaptionsService, YOUTUBE_SHORTS_STYLE } from '../services/captions.service';
 
 export class VideoGenerationWorkflow {
   private openai: OpenAIService;
@@ -23,6 +24,7 @@ export class VideoGenerationWorkflow {
   private duplicateDetector: DuplicateDetector;
   private socialMedia: SocialMediaService;
   private scheduler: SchedulerService;
+  private captions: CaptionsService;
   private workDir: string;
 
   constructor(
@@ -33,6 +35,7 @@ export class VideoGenerationWorkflow {
     duplicateDetector: DuplicateDetector,
     socialMedia: SocialMediaService,
     scheduler: SchedulerService,
+    captions: CaptionsService,
     workDir: string = './output'
   ) {
     this.openai = openai;
@@ -42,6 +45,7 @@ export class VideoGenerationWorkflow {
     this.duplicateDetector = duplicateDetector;
     this.socialMedia = socialMedia;
     this.scheduler = scheduler;
+    this.captions = captions;
     this.workDir = workDir;
   }
 
@@ -128,6 +132,41 @@ export class VideoGenerationWorkflow {
       console.log(`✓ Video segments needed: ${audioGeneration.segmentCount}`);
       console.log('');
 
+      // ⚠️ CRITICAL SAFEGUARD: Validate audio duration
+      const audioDurationDiff = Math.abs(audioGeneration.duration - contentDuration);
+      if (audioDurationDiff > 10) {
+        console.error(`❌ CRITICAL ERROR: Audio duration mismatch!`);
+        console.error(`   Target: ${contentDuration}s`);
+        console.error(`   Actual: ${audioGeneration.duration.toFixed(2)}s`);
+        console.error(`   Difference: ${audioDurationDiff.toFixed(2)}s`);
+        console.error(``);
+        console.error(`This would generate ${audioGeneration.segmentCount} video segments,`);
+        console.error(`which will exhaust your API credits!`);
+        console.error(``);
+        throw new Error(`Audio duration (${audioGeneration.duration.toFixed(2)}s) exceeds target (${contentDuration}s) by ${audioDurationDiff.toFixed(2)}s. Generation aborted to protect your credits.`);
+      }
+
+      // ⚠️ CRITICAL SAFEGUARD: Hard limit on segment count
+      if (audioGeneration.segmentCount > 10) {
+        console.error(`❌ CRITICAL ERROR: Too many segments!`);
+        console.error(`   Requested segments: ${audioGeneration.segmentCount}`);
+        console.error(`   Maximum allowed: 10 segments`);
+        console.error(``);
+        console.error(`This would cost approximately:`);
+        console.error(`   - ${audioGeneration.segmentCount} KIE.AI video generations`);
+        console.error(`   - ${audioGeneration.segmentCount} DALL-E backgrounds`);
+        console.error(`   - Total: Hundreds of dollars in API credits!`);
+        console.error(``);
+        throw new Error(`Segment count (${audioGeneration.segmentCount}) exceeds safety limit (10). Generation aborted to protect your credits.`);
+      }
+
+      // Warning for large videos
+      if (audioGeneration.segmentCount > 5) {
+        console.warn(`⚠️  WARNING: Generating ${audioGeneration.segmentCount} segments will use significant API credits!`);
+        console.warn(`   Estimated cost: $${(audioGeneration.segmentCount * 0.50).toFixed(2)} (KIE) + $${(audioGeneration.segmentCount * 0.08).toFixed(2)} (DALL-E)`);
+        console.warn('');
+      }
+
       // Validate audio duration against target
       const totalTargetDuration = config.maxVideoLength;
       const audioWithMargins = audioGeneration.duration + introDuration + outroDuration;
@@ -194,34 +233,33 @@ export class VideoGenerationWorkflow {
       console.log('');
 
       // ========================================
-      // STEP 5: Generate Background Images
+      // STEP 5: Skip Background Images (Using Frame Chaining Instead)
       // ========================================
-      state.status = 'generating_visuals';
-      state.currentStep = 'Generating background images';
-      state.progress = 40;
-      this.logProgress(state);
-
-      const backgrounds = await this.grok.generateBackgrounds(
-        grokPrompts,
-        imageDir
-      );
-
-      console.log(`✓ Generated ${backgrounds.size} background images`);
+      // Background images are no longer needed since we're using frame chaining
+      // Each segment's last frame becomes the next segment's seed image
+      // This saves DALL-E credits and improves continuity
+      console.log(`⚡ Skipping background generation (using frame chaining for perfect continuity)`);
+      console.log(`   💰 Saved ${grokPrompts.length} DALL-E image generations (~$${(grokPrompts.length * 0.08).toFixed(2)})`);
       console.log('');
 
       // ========================================
-      // STEP 6: Generate Video Segments with Grok
+      // STEP 6: Generate Video Segments with Frame Chaining
       // ========================================
-      state.currentStep = 'Generating video segments';
+      state.currentStep = 'Generating video segments with frame chaining';
       state.progress = 50;
       this.logProgress(state);
 
-      console.log('🎥 Generating video segments (this may take a while)...');
-      const videoSegments = await this.grok.generateVideoSegments(
+      console.log('🎥 Generating video segments with perfect continuity...');
+      console.log('   Using frame chaining: Each segment\'s last frame becomes the next segment\'s seed');
+      console.log('');
+
+      // Use frame chaining for perfect continuity between segments
+      const videoSegments = await this.grok.generateVideoSegmentsWithFrameChaining(
         grokPrompts,
         config.seedPortrait,
         videoDir,
-        true // parallel generation
+        // Pass FFmpeg's extractLastFrame method as a callback
+        (videoPath: string, outputPath: string) => this.ffmpeg.extractLastFrame(videoPath, outputPath)
       );
 
       const successfulSegments = videoSegments.filter(
@@ -238,38 +276,10 @@ export class VideoGenerationWorkflow {
       console.log('');
 
       // ========================================
-      // STEP 7: Create Intro/Outro with Background Replacement
+      // STEP 7: Skip Intro/Outro (No backgrounds needed)
       // ========================================
-      state.currentStep = 'Creating intro and outro sequences';
-      state.progress = 70;
-      this.logProgress(state);
-
-      const introPath = path.join(videoDir, 'intro.mp4');
-      const outroPath = path.join(videoDir, 'outro.mp4');
-
-      // Get first and last backgrounds for intro/outro
-      const firstBg = backgrounds.get(0);
-      const lastBg = backgrounds.get(grokPrompts.length - 1);
-
-      if (firstBg) {
-        await this.ffmpeg.createIntroWithBackground(
-          config.seedPortrait,
-          firstBg,
-          config.introDuration || 3,
-          introPath
-        );
-      }
-
-      if (lastBg) {
-        await this.ffmpeg.createOutroWithBackground(
-          config.seedPortrait,
-          lastBg,
-          config.outroDuration || 3,
-          outroPath
-        );
-      }
-
-      console.log('✓ Created intro and outro sequences');
+      // Intro/outro generation removed - no longer using backgrounds
+      console.log('⚡ Skipping intro/outro (videos start directly with content)');
       console.log('');
 
       // ========================================
@@ -280,19 +290,11 @@ export class VideoGenerationWorkflow {
       state.progress = 80;
       this.logProgress(state);
 
-      // Prepare video segments in order (intro + segments + outro)
-      const allSegments: string[] = [];
-      if (fs.existsSync(introPath)) allSegments.push(introPath);
-
-      successfulSegments
+      // Prepare video segments in order (just content segments, no intro/outro)
+      const allSegments: string[] = successfulSegments
         .sort((a, b) => a.prompt.segmentIndex - b.prompt.segmentIndex)
-        .forEach((seg) => {
-          if (fs.existsSync(seg.videoUrl)) {
-            allSegments.push(seg.videoUrl);
-          }
-        });
-
-      if (fs.existsSync(outroPath)) allSegments.push(outroPath);
+        .filter((seg) => fs.existsSync(seg.videoUrl))
+        .map((seg) => seg.videoUrl);
 
       // Create transitions
       const transitions: TransitionConfig[] = [];
@@ -319,6 +321,32 @@ export class VideoGenerationWorkflow {
       console.log(`  Duration: ${assembledVideo.duration.toFixed(2)}s`);
       console.log(`  Size: ${(assembledVideo.fileSize / 1024 / 1024).toFixed(2)}MB`);
       console.log('');
+
+      // ========================================
+      // STEP 8.5: Add Captions
+      // ========================================
+      state.currentStep = 'Adding word-level captions';
+      state.progress = 85;
+      this.logProgress(state);
+
+      try {
+        const videoWithCaptionsPath = path.join(finalDir, 'final_video_with_captions.mp4');
+        await this.captions.addCaptionsWorkflow(
+          assembledVideo.videoPath,
+          audioPath,
+          videoWithCaptionsPath,
+          YOUTUBE_SHORTS_STYLE
+        );
+
+        // Update the assembled video path to the captioned version
+        assembledVideo.videoPath = videoWithCaptionsPath;
+
+        console.log('✓ Captions added successfully');
+        console.log('');
+      } catch (error) {
+        console.warn(`⚠️  Caption generation failed, continuing without captions: ${error}`);
+        console.log('');
+      }
 
       // ========================================
       // STEP 9: Generate Final Metadata

@@ -29,31 +29,83 @@ export class OpenAIService {
     const targetWordCount = Math.floor(targetMinutes * 95);  // 95 WPM (calibrated for 6.5s avg)
     const maxWordCount = Math.floor(targetMinutes * 110);    // Upper limit at 110 WPM
 
-    console.log(`  ↳ Target duration: ${targetDuration}s → ${targetWordCount}-${maxWordCount} words (95-110 WPM)`);
+    console.log(`  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    console.log(`  📊 SCRIPT GENERATION DEBUG:`);
+    console.log(`     Topic: "${topic}"`);
+    console.log(`     Target duration: ${targetDuration}s`);
+    console.log(`     Target words: ${targetWordCount} (at 95 WPM)`);
+    console.log(`     Max words: ${maxWordCount} (at 110 WPM)`);
+    console.log(`     Absolute max: ${Math.floor((targetDuration / 60) * 120)} words (120 WPM hard limit)`);
+    console.log(`  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
-    const systemPrompt = `You are an expert scriptwriter for short-form video content.
-Create engaging, hook-driven scripts optimized for social media platforms.
+    const systemPrompt = `You are a senior YouTube Shorts script editor who writes tight, high-value narratives.
+You specialize in KJV Bible wisdom, AI automation, and business strategy.
+Your scripts are concrete, example-driven, and avoid corporate fluff.
 The script should be conversational, dynamic, and designed for AI voice narration.
-CRITICAL: You MUST strictly adhere to the word count limit provided.`;
+CRITICAL: You MUST strictly adhere to the word count limit provided and use CLEAN text formatting.`;
 
     const userPrompt = `Create a compelling ${targetDuration}-second video script about: "${topic}"
+
+CONTENT THEMES (must include at least one):
+- KJV Bible principles and wisdom applied to modern life
+- AI automation strategies and practical implementation
+- Business growth, entrepreneurship, and wealth building
+- Intersection of faith, technology, and commerce
 
 CRITICAL CONSTRAINT - WORD COUNT:
 - Target: ${targetWordCount} words (STRICT LIMIT)
 - Maximum: ${maxWordCount} words (DO NOT EXCEED)
 - This ensures the script takes exactly ${targetDuration} seconds when spoken at natural pace
 
-Requirements:
-1. Start with a strong hook (first 3 seconds)
-2. Use conversational, engaging language
-3. Include natural pauses for emphasis
-4. Break into clear segments for visual changes
-5. End with a strong call-to-action hint
-6. Optimize for AI voice narration (clear pronunciation)
-7. STAY WITHIN THE WORD COUNT LIMIT - this is the most important requirement
+FORMATTING RULES (CRITICAL for ElevenLabs):
+- Use ONLY plain text - NO asterisks, NO markdown, NO special characters
+- NO bullet points, NO bold/italic markers, NO parentheses for emphasis
+- NO stage directions like [pause] or (dramatic)
+- Just clean, natural spoken sentences
+- Use commas and periods for natural pauses
+- Write EXACTLY how it should be spoken
+
+STRUCTURE FOR SHORTS (keep it flowing, not choppy):
+- Hook: 1 strong sentence that poses a problem or surprising fact
+- Setup: 1 sentence of context that tees up the value
+- Value: 3 sentences, each = one actionable move with a mini example (numbers, timeframe, or concrete “how”)
+- Close: 1-2 sentences with a crisp takeaway + CTA
+- Keep one clear throughline; no random topic jumps
+
+SCRIPT REQUIREMENTS:
+1. COMPLETE NARRATIVE ARC:
+   - Hook (first 5-7s): Attention-grabbing problem or question
+   - Value (middle 70%): Deliver 2-3 concrete, actionable insights
+   - Conclusion (final 10s): Clear takeaway and call-to-action
+   - CRITICAL: Ensure the story feels COMPLETE, not rushed or cut off
+
+2. DELIVERY VALUE:
+   - Provide specific, implementable advice viewers can use TODAY
+   - No generic motivational fluff - give real strategies
+   - Include at least 2-3 specific examples or tactics
+   - Answer: "What can someone DO with this information?"
+   - Include a quick “for example…” moment with a number, timebox, or tool name
+
+3. PACING & ENGAGEMENT:
+   - Use conversational, engaging language
+   - Include natural pauses for emphasis (via punctuation only)
+   - Break into clear segments for visual changes
+   - Make every word count - no filler
+   - Build tension and resolution naturally
+
+4. FORMATTING (CRITICAL):
+   - STAY WITHIN THE WORD COUNT LIMIT - this is the most important requirement
+   - Use ONLY plain text for ElevenLabs compatibility
+   - Write EXACTLY how it should be spoken
+
+UNIQUENESS:
+- Avoid generic content or clichés
+- Provide specific, actionable insights
+- Use unique angles on familiar topics
+- No duplicate storylines or repetitive content
 
 Provide:
-1. Full script with timing markers (MUST be within word count)
+1. Full script (CLEAN text only, within word count)
 2. Story outline with key points
 3. Tone description
 4. Estimated duration per segment
@@ -66,7 +118,7 @@ Format as JSON with fields: script, storyOutline, keyPoints (array), tone, estim
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      temperature: 0.8,
+      temperature: 0.6,
       response_format: { type: 'json_object' },
     });
 
@@ -79,6 +131,21 @@ Format as JSON with fields: script, storyOutline, keyPoints (array), tone, estim
 
     // ENFORCE word count limit for accurate TTS duration
     let finalScript = result.script;
+
+    // CLEAN script formatting for ElevenLabs (remove asterisks, markdown, special chars)
+    const cleanScriptFormatting = (text: string): string => {
+      return text
+        .replace(/\*\*/g, '')        // Remove bold markdown
+        .replace(/\*/g, '')          // Remove asterisks
+        .replace(/_/g, '')           // Remove underscores
+        .replace(/\[.*?\]/g, '')     // Remove stage directions [like this]
+        .replace(/\(.*?\)/g, '')     // Remove parenthetical notes (like this)
+        .replace(/#{1,6}\s/g, '')    // Remove markdown headers
+        .replace(/`/g, '')           // Remove backticks
+        .replace(/~/g, '')           // Remove tildes
+        .replace(/\s+/g, ' ')        // Normalize whitespace
+        .trim();
+    };
 
     // Extract text and count words
     const extractTextFromScript = (script: any): string => {
@@ -103,19 +170,38 @@ Format as JSON with fields: script, storyOutline, keyPoints (array), tone, estim
       return String(script);
     };
 
-    const scriptText = extractTextFromScript(finalScript);
+    let scriptText = extractTextFromScript(finalScript);
+
+    // Apply cleaning to remove any formatting issues
+    scriptText = cleanScriptFormatting(scriptText);
+
     const words = scriptText.trim().split(/\s+/);
     const actualWordCount = words.length;
 
     console.log(`  ↳ Generated script: ${actualWordCount} words (target: ${targetWordCount}, max: ${maxWordCount})`);
 
-    // Truncate words if over limit
+    // ⚠️ CRITICAL: HARD TRUNCATE if over limit (OpenAI often ignores word limits)
     if (actualWordCount > maxWordCount) {
-      console.log(`  ↳ ENFORCING word count: Truncating from ${actualWordCount} to ${maxWordCount} words`);
+      console.log(`  ↳ ⚠️  ENFORCING word count: Truncating from ${actualWordCount} to ${maxWordCount} words`);
       const truncatedText = words.slice(0, maxWordCount).join(' ');
+      finalScript = cleanScriptFormatting(truncatedText);
+    } else if (actualWordCount > targetWordCount) {
+      // Even if under max, warn if over target
+      console.warn(`  ↳ ⚠️  Script is ${actualWordCount - targetWordCount} words over target (${targetWordCount})`);
+      console.warn(`  ↳ This may result in longer audio than requested`);
+      finalScript = scriptText;
+    } else {
+      // Use cleaned script if within word count
+      finalScript = scriptText;
+    }
 
-      // Rebuild script in simple string format (most reliable for TTS)
-      finalScript = truncatedText;
+    // ⚠️ ULTIMATE SAFEGUARD: Absolute word limit based on max duration
+    // Never allow more than 120 WPM (even if AI generates more)
+    const absoluteMaxWords = Math.floor((targetDuration / 60) * 120);
+    if (words.length > absoluteMaxWords) {
+      console.error(`  ↳ ❌ CRITICAL: Script way too long! Applying emergency truncation.`);
+      console.error(`  ↳ Generated: ${words.length} words, Absolute max: ${absoluteMaxWords} words`);
+      finalScript = words.slice(0, absoluteMaxWords).join(' ');
     }
 
     // HARD ENFORCE duration limit by truncating script segments
@@ -173,7 +259,7 @@ Format as JSON with fields: script, storyOutline, keyPoints (array), tone, estim
   }
 
   /**
-   * Generates optimized Grok prompts for each video segment
+   * Generates optimized Grok prompts for each video segment with perfect continuity
    */
   async generateGrokPrompts(
     scriptGeneration: ScriptGeneration,
@@ -181,11 +267,23 @@ Format as JSON with fields: script, storyOutline, keyPoints (array), tone, estim
     seedPortraitDescription: string,
     segmentDuration: number = 7
   ): Promise<GrokPrompt[]> {
+    // ⚠️ Special case: For single-segment videos, create a simple prompt
+    if (segmentCount <= 1) {
+      return [{
+        segmentIndex: 0,
+        videoPrompt: `${seedPortraitDescription} speaking directly to camera with natural expressions and subtle movements. ${scriptGeneration.script}. Professional lighting, cinematic composition, engaging delivery.`,
+        backgroundPrompt: `Professional studio setup with soft lighting and depth, suitable for ${scriptGeneration.tone} content`,
+        transitionType: 'crossfade' as const,
+        duration: segmentDuration,
+        continuityNote: 'Single-segment video - maintains consistent framing throughout'
+      }];
+    }
     const systemPrompt = `You are an expert at creating prompts for Grok's image and video generation AI.
-Create highly detailed, visually descriptive prompts that produce cinematic, professional results.
-Focus on lighting, composition, mood, and realistic details.`;
+Create highly detailed, visually descriptive prompts that produce cinematic, professional results with PERFECT CONTINUITY.
+Focus on lighting, composition, mood, realistic details, and logical scene transitions.
+CRITICAL: Every scene must flow naturally with NO teleporting or logic breaks.`;
 
-    const userPrompt = `Based on this script and story, create ${segmentCount} unique visual prompts for Grok Imagine.
+    const userPrompt = `Based on this script and story, create ${segmentCount} unique visual prompts for Grok Imagine with PERFECT CONTINUITY.
 
 Script: ${scriptGeneration.script}
 Story Outline: ${scriptGeneration.storyOutline}
@@ -193,25 +291,54 @@ Tone: ${scriptGeneration.tone}
 
 Portrait Description: ${seedPortraitDescription}
 
+CRITICAL CONTINUITY RULES:
+1. Every scene must logically flow to the next (NO TELEPORTING)
+2. Always return to portrait/face between major scene changes
+3. Physical movement must make sense (walking, driving, entering, sitting, etc.)
+4. Scene transitions must be natural and motivated
+
+CONTINUITY PATTERN EXAMPLE:
+Segment 1: Close-up of speaker's face (portrait) delivering hook
+Segment 2: Wide shot of speaker standing on cliff edge, wind in hair
+Segment 3: Camera follows speaker walking down path from cliff
+Segment 4: Speaker approaching car in parking lot
+Segment 5: Interior shot of speaker driving, looking determined
+Segment 6: Speaker parking car, getting out
+Segment 7: Speaker entering workspace/office
+Segment 8: Close-up of speaker's face as they sit down, concluding thought
+
+KEY: Each scene MUST connect to the previous one. No sudden location jumps without showing the transition.
+
 For EACH segment, provide:
 1. videoPrompt: Detailed prompt for generating a ${segmentDuration}-second video with the portrait as seed
    - Include specific actions, expressions, lighting, camera movement
+   - MUST show logical progression from previous segment
    - Maintain consistency with the portrait
    - Match the script's mood and timing
+   - Specify camera angle (close-up, medium, wide) for variety
+   - ⚠️ CRITICAL: NO DIALOGUE - Silent action scenes only. Subject should NOT speak or move lips. Focus on physical actions, gestures, and facial expressions without speech.
 
 2. backgroundPrompt: High-quality background image prompt
    - Cinematic, professional composition
+   - MUST connect to previous location or show transition space
    - Lighting that complements the scene
    - Depth and atmosphere
    - Should seamlessly blend with the portrait
 
 3. transitionType: Choose from 'crossfade', 'morph', 'zoom', 'pan'
+   - Use 'crossfade' for gentle scene changes
+   - Use 'pan' for spatial movement
+   - Use 'zoom' for emphasis shifts
+
 4. duration: ${segmentDuration} seconds per segment
 
-Make each segment visually distinct but narratively cohesive.
-Ensure smooth visual flow between segments.
+5. continuityNote: Brief description of how this segment connects to the next
 
-Format as JSON array with fields: segmentIndex, videoPrompt, backgroundPrompt, transitionType, duration`;
+Make each segment visually distinct but perfectly connected.
+Ensure ZERO logic breaks or teleporting between scenes.
+Always return to close-up of face at strategic moments (beginning, middle, end).
+
+Format as JSON array with fields: segmentIndex, videoPrompt, backgroundPrompt, transitionType, duration, continuityNote`;
 
     const response = await this.client.chat.completions.create({
       model: this.model,
@@ -229,7 +356,31 @@ Format as JSON array with fields: segmentIndex, videoPrompt, backgroundPrompt, t
     }
 
     const result = JSON.parse(content);
-    return result.prompts || result.segments || [];
+
+    // ⚠️ DEBUG: Log what OpenAI actually returns
+    console.log(`  📊 OpenAI response keys: ${Object.keys(result).join(', ')}`);
+
+    // Try multiple possible keys for the prompts array
+    let prompts = result.prompts || result.segments || result.scenes || [];
+
+    // If none of those worked, check if any value is an array
+    if (!Array.isArray(prompts) || prompts.length === 0) {
+      const arrayValues = Object.values(result).filter(v => Array.isArray(v));
+      if (arrayValues.length > 0) {
+        prompts = arrayValues[0] as any[];
+        console.log(`  ↳ Found prompts in alternate key`);
+      }
+    }
+
+    console.log(`  ↳ Extracted ${prompts.length} prompts`);
+
+    // ⚠️ CRITICAL: Trim to exact segment count (OpenAI often generates more than requested)
+    if (prompts.length > segmentCount) {
+      console.warn(`  ⚠️  OpenAI generated ${prompts.length} prompts but only ${segmentCount} needed. Trimming...`);
+      return prompts.slice(0, segmentCount);
+    }
+
+    return prompts;
   }
 
   /**

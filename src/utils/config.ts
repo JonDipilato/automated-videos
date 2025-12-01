@@ -88,8 +88,9 @@ export class ConfigLoader {
         minGapMinutes: parseInt(process.env.SCHEDULE_MIN_GAP_MINUTES || '15'),
       },
       outputResolution: parseInt(process.env.OUTPUT_RESOLUTION || '1080'),
-      // Priority: CLI arg > ENV var > Default (60s for short-form social media)
-      maxVideoLength: maxVideoLength ?? parseInt(process.env.MAX_VIDEO_LENGTH || '60'),
+      // Priority: CLI arg > ENV var > Default (55s for YouTube Shorts with value)
+      // 55s = 7 segments × 7s + 3s intro + 3s outro = complete narrative
+      maxVideoLength: maxVideoLength ?? parseInt(process.env.MAX_VIDEO_LENGTH || '55'),
       introDuration: parseInt(process.env.INTRO_DURATION || '3'),
       outroDuration: parseInt(process.env.OUTRO_DURATION || '3'),
     };

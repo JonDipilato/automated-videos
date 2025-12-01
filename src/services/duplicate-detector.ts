@@ -57,8 +57,9 @@ export class DuplicateDetector {
       }
     }
 
-    // Check title similarity (semantic)
+    // Check title similarity (semantic) - skip blanks to avoid false positives
     for (const [id, content] of this.contentDatabase) {
+      if (!title.trim() || !content.title.trim()) continue;
       const titleSimilarity = this.calculateSimilarity(title, content.title);
 
       if (titleSimilarity > 0.85) {
@@ -71,8 +72,9 @@ export class DuplicateDetector {
       }
     }
 
-    // Check description similarity
+    // Check description similarity - skip blanks to avoid false positives
     for (const [id, content] of this.contentDatabase) {
+      if (!description.trim() || !content.description.trim()) continue;
       const descSimilarity = this.calculateSimilarity(
         description,
         content.description
@@ -295,7 +297,13 @@ export class DuplicateDetector {
 
       // Convert Map to array for JSON serialization
       const array = Array.from(this.contentDatabase.values()).map((item) => ({
-        ...item,
+        id: item.id,
+        title: item.title,
+        description: item.description,
+        scriptHash: item.scriptHash,
+        storyOutlineHash: item.storyOutlineHash,
+        createdAt: item.createdAt.toISOString(), // Serialize Date to string
+        platforms: item.platforms,
         publishedUrls: Object.fromEntries(item.publishedUrls),
       }));
 

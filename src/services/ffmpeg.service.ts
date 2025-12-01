@@ -49,11 +49,16 @@ export class FFmpegService {
       // Step 2: Add CTA overlay if configured
       let videoWithCTA = transitionedVideoPath;
       if (ctaConfig) {
-        videoWithCTA = await this.addCTAOverlay(
-          transitionedVideoPath,
-          ctaConfig,
-          path.join(path.dirname(outputPath), 'temp_with_cta.mp4')
-        );
+        try {
+          videoWithCTA = await this.addCTAOverlay(
+            transitionedVideoPath,
+            ctaConfig,
+            path.join(path.dirname(outputPath), 'temp_with_cta.mp4')
+          );
+        } catch (error) {
+          console.warn('⚠️  CTA overlay failed, skipping:', error);
+          // Continue without CTA - don't block the entire assembly
+        }
       }
 
       // Step 3: Sync audio with video
@@ -138,8 +143,9 @@ export class FFmpegService {
       }
     }
 
-    // Execute FFmpeg command
-    const command = `ffmpeg ${inputs} -filter_complex "${filterComplex}" -map "[vout]" -c:v ${this.codec} -b:v ${this.bitrate} -r ${this.fps} "${outputPath}" -y`;
+    // Execute FFmpeg command with audio preservation
+    // Map video output and mix audio from all segments
+    const command = `ffmpeg ${inputs} -filter_complex "${filterComplex};amix=inputs=${videoSegments.length}:duration=longest[aout]" -map "[vout]" -map "[aout]" -c:v ${this.codec} -b:v ${this.bitrate} -r ${this.fps} -c:a aac -b:a 192k "${outputPath}" -y`;
 
     try {
       execSync(command, { stdio: 'pipe' });
@@ -163,7 +169,7 @@ export class FFmpegService {
       'concat_list.txt'
     );
     const concatContent = videoSegments
-      .map((segment) => `file '${segment}'`)
+      .map((segment) => `file '${path.resolve(segment)}'`)
       .join('\n');
     fs.writeFileSync(concatFilePath, concatContent);
 
@@ -210,7 +216,7 @@ export class FFmpegService {
       filterComplex = `[0:v][1:v]overlay=W-w-10:H-h-10:enable='between(t,0,${ctaDuration})+between(t,${endStartTime},${videoDuration})'[vout]`;
     }
 
-    const command = `ffmpeg -i "${inputVideoPath}" -i "${ctaImagePath}" -filter_complex "${filterComplex}" -map "[vout]" -c:v ${this.codec} -b:v ${this.bitrate} "${outputPath}" -y`;
+    const command = `ffmpeg -i "${inputVideoPath}" -i "${ctaImagePath}" -filter_complex "${filterComplex}" -map "[vout]" -map "0:a?" -c:v ${this.codec} -b:v ${this.bitrate} -c:a copy "${outputPath}" -y`;
 
     execSync(command, { stdio: 'pipe' });
 
@@ -249,9 +255,33 @@ export class FFmpegService {
   ): Promise<void> {
     console.log('  Syncing audio with video...');
 
-    const command = `ffmpeg -i "${videoPath}" -i "${audioPath}" -c:v copy -c:a aac -b:a 192k -map 0:v:0 -map 1:a:0 -shortest "${outputPath}" -y`;
+    // Get durations to ensure video matches audio
+    const videoDuration = await this.getVideoDuration(videoPath);
+    const audioDuration = await this.getVideoDuration(audioPath);
 
-    execSync(command, { stdio: 'pipe' });
+    console.log(`    Video: ${videoDuration.toFixed(2)}s, Audio: ${audioDuration.toFixed(2)}s`);
+
+    const durationDiff = audioDuration - videoDuration; // positive = audio longer
+
+    if (Math.abs(durationDiff) > 0.5) {
+      if (durationDiff > 0) {
+        // Audio is longer -> extend video by cloning last frame
+        const padSeconds = durationDiff.toFixed(2);
+        console.warn(`    ⚠️  Duration mismatch: audio longer by ${padSeconds}s. Extending video frames.`);
+        const command = `ffmpeg -i "${videoPath}" -i "${audioPath}" -filter_complex "[0:v]tpad=stop_mode=clone:stop_duration=${padSeconds}[v]" -map "[v]" -map 1:a:0 -c:v libx264 -c:a aac -b:a 192k "${outputPath}" -y`;
+        execSync(command, { stdio: 'pipe' });
+      } else {
+        // Video is longer -> extend audio with silence to avoid dead air at the end
+        const padSeconds = Math.abs(durationDiff).toFixed(2);
+        console.warn(`    ⚠️  Duration mismatch: video longer by ${padSeconds}s. Extending audio with silence.`);
+        const command = `ffmpeg -i "${videoPath}" -i "${audioPath}" -filter_complex "[1:a]apad=pad_dur=${padSeconds}[a]" -map 0:v:0 -map "[a]" -c:v libx264 -c:a aac -b:a 192k "${outputPath}" -y`;
+        execSync(command, { stdio: 'pipe' });
+      }
+    } else {
+      // Durations match, simple merge
+      const command = `ffmpeg -i "${videoPath}" -i "${audioPath}" -c:v copy -c:a aac -b:a 192k -map 0:v:0 -map 1:a:0 "${outputPath}" -y`;
+      execSync(command, { stdio: 'pipe' });
+    }
   }
 
   /**
@@ -400,6 +430,33 @@ export class FFmpegService {
         }
       }
     });
+  }
+
+  /**
+   * Extracts the last frame from a video segment
+   * This frame can be used as seed for the next segment for perfect continuity
+   */
+  async extractLastFrame(
+    videoPath: string,
+    outputPath: string
+  ): Promise<string> {
+    try {
+      // Get video duration first
+      const duration = await this.getVideoDuration(videoPath);
+
+      // Extract frame from the last 0.1 seconds (just before the end)
+      const timestamp = Math.max(0, duration - 0.1);
+
+      const command = `ffmpeg -ss ${timestamp} -i "${videoPath}" -vframes 1 -q:v 2 "${outputPath}" -y`;
+
+      execSync(command, { stdio: 'pipe' });
+
+      console.log(`  ✓ Extracted last frame: ${path.basename(outputPath)}`);
+      return outputPath;
+    } catch (error) {
+      console.error(`Failed to extract last frame from ${videoPath}:`, error);
+      throw error;
+    }
   }
 
   /**

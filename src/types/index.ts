@@ -62,6 +62,7 @@ export interface GrokPrompt {
   backgroundPrompt: string;
   transitionType: 'crossfade' | 'morph' | 'zoom' | 'pan';
   duration: number;
+  continuityNote?: string; // Description of how this segment connects to the next
 }
 
 export interface AudioGeneration {
