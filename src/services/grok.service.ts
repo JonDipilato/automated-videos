@@ -164,24 +164,24 @@ export class GrokService {
       );
       results.push(result);
 
-      // If successful and not the last segment, extract last frame for next segment
+      // If successful and not the last segment, extract and composite frame for next segment
       if (result.status === 'completed' && i < grokPrompts.length - 1) {
         try {
-          const lastFramePath = path.join(
+          const compositedFramePath = path.join(
             outputDir,
-            `../images/transition_frame_${i}.png`
+            `../images/transition_composite_${i}.png`
           );
 
-          // Extract last frame from this video to use as seed for next
-          await ffmpegExtractLastFrame(result.videoUrl, lastFramePath);
+          // Extract last frame AND composite original portrait over it
+          await ffmpegExtractLastFrame(result.videoUrl, compositedFramePath);
 
           // Update seed for next iteration
-          currentSeedPath = lastFramePath;
+          currentSeedPath = compositedFramePath;
 
-          console.log(`   ✓ Frame chained to next segment`);
+          console.log(`   ✓ Composited frame chained to next segment`);
         } catch (error) {
-          console.warn(`   ⚠️  Frame extraction failed, using original seed for next segment`);
-          // Continue with original seed if extraction fails
+          console.warn(`   ⚠️  Frame compositing failed, using original seed for next segment`);
+          // Continue with original seed if compositing fails
         }
       }
     }

@@ -254,12 +254,14 @@ export class VideoGenerationWorkflow {
       console.log('');
 
       // Use frame chaining for perfect continuity between segments
+      // Composites original portrait over extracted backgrounds for character consistency
       const videoSegments = await this.grok.generateVideoSegmentsWithFrameChaining(
         grokPrompts,
         config.seedPortrait,
         videoDir,
-        // Pass FFmpeg's extractLastFrame method as a callback
-        (videoPath: string, outputPath: string) => this.ffmpeg.extractLastFrame(videoPath, outputPath)
+        // Pass compositing method that overlays TRANSPARENT portrait from URL on background
+        (videoPath: string, outputPath: string) =>
+          this.ffmpeg.extractLastFrameAndComposite(videoPath, process.env.PORTRAIT_URL || config.seedPortrait, outputPath)
       );
 
       const successfulSegments = videoSegments.filter(

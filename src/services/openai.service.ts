@@ -271,7 +271,7 @@ Format as JSON with fields: script, storyOutline, keyPoints (array), tone, estim
     if (segmentCount <= 1) {
       return [{
         segmentIndex: 0,
-        videoPrompt: `${seedPortraitDescription} speaking directly to camera with natural expressions and subtle movements. ${scriptGeneration.script}. Professional lighting, cinematic composition, engaging delivery.`,
+        videoPrompt: `${seedPortraitDescription} facing camera with natural, engaged expressions. Silent portrait with no mouth movement. ${scriptGeneration.keyPoints.join(', ')}. Professional lighting, cinematic composition.`,
         backgroundPrompt: `Professional studio setup with soft lighting and depth, suitable for ${scriptGeneration.tone} content`,
         transitionType: 'crossfade' as const,
         duration: segmentDuration,
@@ -281,7 +281,15 @@ Format as JSON with fields: script, storyOutline, keyPoints (array), tone, estim
     const systemPrompt = `You are an expert at creating prompts for Grok's image and video generation AI.
 Create highly detailed, visually descriptive prompts that produce cinematic, professional results with PERFECT CONTINUITY.
 Focus on lighting, composition, mood, realistic details, and logical scene transitions.
-CRITICAL: Every scene must flow naturally with NO teleporting or logic breaks.`;
+CRITICAL: Every scene must flow naturally with NO teleporting or logic breaks.
+
+🚫 ABSOLUTE REQUIREMENT - NO SPEECH:
+The subject must NEVER speak, talk, or move their lips. This is a SILENT portrait video.
+- NO mouth movement or lip motion of any kind
+- NO dialogue, speaking, talking, or verbal communication
+- Focus ONLY on facial expressions, head movements, and body language WITHOUT speech
+- Examples of FORBIDDEN actions: speaking, talking, saying, mouthing words, lip sync, dialogue
+- Examples of ALLOWED actions: smiling, nodding, thinking expressions, looking around, hand gestures`;
 
     const userPrompt = `Based on this script and story, create ${segmentCount} unique visual prompts for Grok Imagine with PERFECT CONTINUITY.
 
@@ -309,14 +317,21 @@ Segment 8: Close-up of speaker's face as they sit down, concluding thought
 
 KEY: Each scene MUST connect to the previous one. No sudden location jumps without showing the transition.
 
+🚫 MANDATORY: SILENT PORTRAIT - NO SPEECH OR LIP MOVEMENT
+Every video prompt MUST specify that the subject does NOT speak, talk, or move their lips.
+- Write "silent portrait" or "no mouth movement" in EVERY videoPrompt
+- Never use words like: speaking, talking, saying, dialogue, words
+- Subject can smile, nod, think, look around - but NEVER open mouth to speak
+
 For EACH segment, provide:
 1. videoPrompt: Detailed prompt for generating a ${segmentDuration}-second video with the portrait as seed
+   - FIRST LINE MUST STATE: "Silent portrait with no mouth movement or speech"
    - Include specific actions, expressions, lighting, camera movement
    - MUST show logical progression from previous segment
    - Maintain consistency with the portrait
    - Match the script's mood and timing
    - Specify camera angle (close-up, medium, wide) for variety
-   - ⚠️ CRITICAL: NO DIALOGUE - Silent action scenes only. Subject should NOT speak or move lips. Focus on physical actions, gestures, and facial expressions without speech.
+   - Focus on physical actions, gestures, and facial expressions WITHOUT any mouth/lip movement
 
 2. backgroundPrompt: High-quality background image prompt
    - Cinematic, professional composition

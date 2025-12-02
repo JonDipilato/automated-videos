@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
+import axios from 'axios';
 import {
   AssembledVideo,
   TransitionConfig,
@@ -455,6 +456,68 @@ export class FFmpegService {
       return outputPath;
     } catch (error) {
       console.error(`Failed to extract last frame from ${videoPath}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Extracts last frame from video AND composites original portrait over it
+   * This ensures character consistency across segments by always using the original portrait
+   * while preserving background continuity from the generated video
+   */
+  async extractLastFrameAndComposite(
+    videoPath: string,
+    originalPortraitPath: string,
+    outputPath: string
+  ): Promise<string> {
+    try {
+      const tempFramePath = outputPath.replace('.png', '_temp.png');
+      let portraitPath = originalPortraitPath;
+      let downloadedPortrait = false;
+
+      // Step 0: If portrait is a URL, download it first
+      if (originalPortraitPath.startsWith('http://') || originalPortraitPath.startsWith('https://')) {
+        const tempPortraitPath = outputPath.replace('.png', '_portrait.png');
+        console.log(`  ↳ Downloading transparent portrait from URL...`);
+
+        const response = await axios.get(originalPortraitPath, { responseType: 'arraybuffer' });
+        fs.writeFileSync(tempPortraitPath, response.data);
+
+        portraitPath = tempPortraitPath;
+        downloadedPortrait = true;
+      }
+
+      // Step 1: Extract last frame from video
+      await this.extractLastFrame(videoPath, tempFramePath);
+
+      // Step 2: Apply slight blur to hide AI-generated subject (boxblur=15:5)
+      const blurredBgPath = outputPath.replace('.png', '_bg.png');
+      const blurCmd = `ffmpeg -i "${tempFramePath}" -vf "boxblur=15:5" "${blurredBgPath}" -y`;
+      execSync(blurCmd, { stdio: 'pipe' });
+
+      // Step 3: Composite original portrait over blurred background
+      // Center portrait, scale to 70% of frame height
+      // Use overlay with explicit alpha mode and shortest=1 to ensure proper blending
+      const compositeCmd = `ffmpeg -i "${blurredBgPath}" -i "${portraitPath}" ` +
+        `-filter_complex "[1:v]scale=-1:ih*0.7[portrait];[0:v][portrait]overlay=(W-w)/2:(H-h)/2:shortest=1:format=auto" ` +
+        `"${outputPath}" -y`;
+      execSync(compositeCmd, { stdio: 'pipe' });
+
+      // Step 4: Cleanup temp files
+      if (fs.existsSync(tempFramePath)) {
+        fs.unlinkSync(tempFramePath);
+      }
+      if (fs.existsSync(blurredBgPath)) {
+        fs.unlinkSync(blurredBgPath);
+      }
+      if (downloadedPortrait && fs.existsSync(portraitPath)) {
+        fs.unlinkSync(portraitPath);
+      }
+
+      console.log(`  ✓ Extracted and composited: ${path.basename(outputPath)}`);
+      return outputPath;
+    } catch (error) {
+      console.error(`Failed to extract and composite frame from ${videoPath}:`, error);
       throw error;
     }
   }
