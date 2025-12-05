@@ -50,6 +50,7 @@ export interface PlatformSchedule {
 
 export interface ScriptGeneration {
   script: string;
+  originalScript?: string; // Preserve full script before truncation for prompt generation
   storyOutline: string;
   keyPoints: string[];
   tone: string;

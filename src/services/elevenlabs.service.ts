@@ -101,13 +101,17 @@ export class ElevenLabsService {
       const duration = await this.getAudioDuration(outputPath);
 
       // Calculate segment count (critical for video generation)
-      // Add +1 buffer segment to ensure we ALWAYS have enough video to cover audio
+      // Add +1 buffer segment ONLY if under safety limit (10 segments max)
       // (KIE videos can be 6-7s, so better to have extra than freeze-frame)
       const baseSegmentCount = Math.ceil(duration / segmentDuration);
-      const segmentCount = baseSegmentCount + 1;  // Safety buffer
+      const segmentCount = baseSegmentCount < 10 ? baseSegmentCount + 1 : baseSegmentCount;
 
       console.log(`✓ Audio generated: ${duration.toFixed(2)}s`);
-      console.log(`✓ Segments needed: ${segmentCount} (${baseSegmentCount} + 1 buffer) @ ${segmentDuration}s each`);
+      if (segmentCount > baseSegmentCount) {
+        console.log(`✓ Segments needed: ${segmentCount} (${baseSegmentCount} + 1 buffer) @ ${segmentDuration}s each`);
+      } else {
+        console.log(`✓ Segments needed: ${segmentCount} (at safety limit, no buffer) @ ${segmentDuration}s each`);
+      }
 
       return {
         audioPath: outputPath,

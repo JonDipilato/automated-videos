@@ -26,6 +26,7 @@ export class VideoGenerationWorkflow {
   private scheduler: SchedulerService;
   private captions: CaptionsService;
   private workDir: string;
+  private progressCallback?: (status: string, step: string, progress: number) => void;
 
   constructor(
     openai: OpenAIService,
@@ -54,7 +55,8 @@ export class VideoGenerationWorkflow {
    * Implements AUDIO-FIRST APPROACH
    */
   async generateVideo(
-    config: VideoGenerationConfig
+    config: VideoGenerationConfig,
+    progressCallback?: (status: string, step: string, progress: number) => void
   ): Promise<VideoGenerationResult> {
     const jobId = uuidv4();
     const state: WorkflowState = {
@@ -64,6 +66,9 @@ export class VideoGenerationWorkflow {
       currentStep: 'Initializing workflow',
       startTime: new Date(),
     };
+
+    // Store callback for progress updates
+    this.progressCallback = progressCallback;
 
     try {
       console.log('🚀 Starting Automated Video Generation Workflow');
@@ -525,11 +530,16 @@ export class VideoGenerationWorkflow {
   }
 
   /**
-   * Logs workflow progress
+   * Logs workflow progress and calls database update callback
    */
   private logProgress(state: WorkflowState): void {
     const progressBar = this.createProgressBar(state.progress);
     console.log(`[${progressBar}] ${state.progress}% - ${state.currentStep}`);
+
+    // Call progress callback to update database in real-time
+    if (this.progressCallback) {
+      this.progressCallback(state.status, state.currentStep, state.progress);
+    }
   }
 
   /**

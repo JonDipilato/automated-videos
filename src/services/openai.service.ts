@@ -16,6 +16,38 @@ export class OpenAIService {
   }
 
   /**
+   * Intelligently truncates text at sentence boundaries to prevent mid-sentence cutoffs
+   */
+  private truncateAtSentence(text: string, maxWords: number): string {
+    const words = text.split(/\s+/);
+    if (words.length <= maxWords) return text;
+
+    // Try to find a sentence boundary within the limit
+    // Look for periods, exclamation marks, question marks
+    const withinLimit = words.slice(0, maxWords).join(' ');
+    const sentenceEnders = /[.!?]\s*$/;
+
+    // Work backwards from max to find last complete sentence
+    for (let i = maxWords; i >= Math.floor(maxWords * 0.7); i--) {
+      const candidate = words.slice(0, i).join(' ');
+      if (sentenceEnders.test(candidate)) {
+        console.log(`  ↳ Truncated at sentence boundary: ${i} words (target: ${maxWords})`);
+        return candidate;
+      }
+    }
+
+    // If no sentence boundary found in the acceptable range, add ellipsis
+    const truncated = words.slice(0, maxWords).join(' ');
+    // Check if last word already has punctuation
+    if (!/[.!?]$/.test(truncated)) {
+      console.log(`  ↳ No sentence boundary found, adding period: ${maxWords} words`);
+      return truncated + '.';
+    }
+
+    return truncated;
+  }
+
+  /**
    * Generates a comprehensive script and story outline based on the topic
    */
   async generateScript(
@@ -129,9 +161,6 @@ Format as JSON with fields: script, storyOutline, keyPoints (array), tone, estim
 
     const result = JSON.parse(content);
 
-    // ENFORCE word count limit for accurate TTS duration
-    let finalScript = result.script;
-
     // CLEAN script formatting for ElevenLabs (remove asterisks, markdown, special chars)
     const cleanScriptFormatting = (text: string): string => {
       return text
@@ -170,6 +199,13 @@ Format as JSON with fields: script, storyOutline, keyPoints (array), tone, estim
       return String(script);
     };
 
+    // ENFORCE word count limit for accurate TTS duration
+    let finalScript = result.script;
+
+    // Preserve original script text for prompt generation (cleaned, before truncation)
+    let originalScriptText = extractTextFromScript(result.script);
+    originalScriptText = cleanScriptFormatting(originalScriptText);
+
     let scriptText = extractTextFromScript(finalScript);
 
     // Apply cleaning to remove any formatting issues
@@ -180,77 +216,33 @@ Format as JSON with fields: script, storyOutline, keyPoints (array), tone, estim
 
     console.log(`  ↳ Generated script: ${actualWordCount} words (target: ${targetWordCount}, max: ${maxWordCount})`);
 
-    // ⚠️ CRITICAL: HARD TRUNCATE if over limit (OpenAI often ignores word limits)
+    // ✅ USE FULL SCRIPT - No truncation!
+    // We'll generate enough video segments to match the actual audio duration
     if (actualWordCount > maxWordCount) {
-      console.log(`  ↳ ⚠️  ENFORCING word count: Truncating from ${actualWordCount} to ${maxWordCount} words`);
-      const truncatedText = words.slice(0, maxWordCount).join(' ');
-      finalScript = cleanScriptFormatting(truncatedText);
+      console.log(`  ↳ ℹ️  Script is ${actualWordCount - maxWordCount} words over target (${maxWordCount})`);
+      console.log(`  ↳ 📹 Will generate additional video segments to match full audio duration`);
     } else if (actualWordCount > targetWordCount) {
-      // Even if under max, warn if over target
-      console.warn(`  ↳ ⚠️  Script is ${actualWordCount - targetWordCount} words over target (${targetWordCount})`);
-      console.warn(`  ↳ This may result in longer audio than requested`);
-      finalScript = scriptText;
+      console.log(`  ↳ ℹ️  Script is ${actualWordCount - targetWordCount} words over target (${targetWordCount})`);
+      console.log(`  ↳ 📹 Will generate additional video segments to match full audio duration`);
+    }
+
+    // ✅ USE FULL SCRIPT with reasonable maximum (3x target duration)
+    // This prevents excessively long scripts while allowing natural completion
+    const reasonableMaxWords = Math.floor((targetDuration * 3 / 60) * 110); // 3x target, 110 WPM
+
+    if (actualWordCount > reasonableMaxWords) {
+      console.warn(`  ↳ ⚠️  Script is excessively long (${actualWordCount} words, max: ${reasonableMaxWords})`);
+      console.warn(`  ↳ Truncating at sentence boundary to prevent unreasonably long video`);
+      finalScript = this.truncateAtSentence(scriptText, reasonableMaxWords);
     } else {
-      // Use cleaned script if within word count
+      // Use the full script - no truncation
       finalScript = scriptText;
-    }
-
-    // ⚠️ ULTIMATE SAFEGUARD: Absolute word limit based on max duration
-    // Never allow more than 120 WPM (even if AI generates more)
-    const absoluteMaxWords = Math.floor((targetDuration / 60) * 120);
-    if (words.length > absoluteMaxWords) {
-      console.error(`  ↳ ❌ CRITICAL: Script way too long! Applying emergency truncation.`);
-      console.error(`  ↳ Generated: ${words.length} words, Absolute max: ${absoluteMaxWords} words`);
-      finalScript = words.slice(0, absoluteMaxWords).join(' ');
-    }
-
-    // HARD ENFORCE duration limit by truncating script segments
-    if (typeof finalScript === 'string') {
-      try {
-        const parsed = JSON.parse(finalScript);
-
-        // Calculate target segments based on segment duration
-        const targetSegments = Math.ceil(targetDuration / segmentDuration);
-
-        if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'object') {
-          // Handle array format: [{time: "0:00-0:03", text: "..."}, ...]
-          if (parsed.length > targetSegments) {
-            console.log(`  ↳ ENFORCING duration: Truncating script from ${parsed.length} to ${targetSegments} segments`);
-            finalScript = JSON.stringify(parsed.slice(0, targetSegments));
-          }
-        } else if (typeof parsed === 'object' && !Array.isArray(parsed)) {
-          // Handle object-with-time-keys format: {"0-3s": "text", "4-30s": "text"}
-          if (parsed.text && typeof parsed.text === 'object') {
-            // Nested format: {"text": {"0-3s": "...", "4-30s": "..."}}
-            const timeKeys = Object.keys(parsed.text);
-            if (timeKeys.length > targetSegments) {
-              console.log(`  ↳ ENFORCING duration: Truncating script from ${timeKeys.length} to ${targetSegments} segments`);
-              const truncatedText: any = {};
-              timeKeys.slice(0, targetSegments).forEach(key => {
-                truncatedText[key] = parsed.text[key];
-              });
-              finalScript = JSON.stringify({ ...parsed, text: truncatedText });
-            }
-          } else {
-            // Direct format: {"0-3s": "...", "4-30s": "..."}
-            const timeKeys = Object.keys(parsed).filter(k => typeof parsed[k] === 'string');
-            if (timeKeys.length > targetSegments) {
-              console.log(`  ↳ ENFORCING duration: Truncating script from ${timeKeys.length} to ${targetSegments} segments`);
-              const truncated: any = {};
-              timeKeys.slice(0, targetSegments).forEach(key => {
-                truncated[key] = parsed[key];
-              });
-              finalScript = JSON.stringify(truncated);
-            }
-          }
-        }
-      } catch (e) {
-        // Script is plain text, use as-is
-      }
+      console.log(`  ↳ ✅ Using full ${actualWordCount}-word script`)
     }
 
     return {
       script: finalScript,
+      originalScript: originalScriptText, // Preserve full cleaned script text for prompt generation
       storyOutline: result.storyOutline,
       keyPoints: result.keyPoints,
       tone: result.tone,
@@ -278,10 +270,18 @@ Format as JSON with fields: script, storyOutline, keyPoints (array), tone, estim
         continuityNote: 'Single-segment video - maintains consistent framing throughout'
       }];
     }
-    const systemPrompt = `You are an expert at creating prompts for Grok's image and video generation AI.
-Create highly detailed, visually descriptive prompts that produce cinematic, professional results with PERFECT CONTINUITY.
-Focus on lighting, composition, mood, realistic details, and logical scene transitions.
+    const systemPrompt = `You are an elite cinematographer and visual storytelling expert for Grok's video generation AI.
+Create VISUALLY STUNNING, DRAMATIC, and CINEMATIC prompts that produce BREATHTAKING, EPIC results with PERFECT CONTINUITY.
+Focus on DRAMATIC lighting, DYNAMIC compositions, POWERFUL mood, and EXCITING scene transitions that captivate viewers.
 CRITICAL: Every scene must flow naturally with NO teleporting or logic breaks.
+
+🎬 VISUAL EXCELLENCE REQUIREMENTS:
+- DRAMATIC LIGHTING: Golden hour, rim lighting, volumetric light rays, neon glows, cinematic contrast
+- DYNAMIC CAMERA WORK: Low angles for power, dutch angles for energy, dramatic zooms, sweeping movements
+- EXCITING ENVIRONMENTS: Rooftop cityscapes, modern glass offices, tech labs, urban landscapes, dramatic outdoor settings
+- VISUAL INTEREST: Reflections, dramatic shadows, depth layers, atmospheric effects (fog, rain, particles)
+- CINEMATIC STYLE: Film-like depth of field, color grading (teal/orange, high contrast), lens flares, bokeh
+- EMOTIONAL IMPACT: Heroic poses, determined expressions, powerful body language that inspires
 
 🚫 ABSOLUTE REQUIREMENT - NO SPEECH:
 The subject must NEVER speak, talk, or move their lips. This is a SILENT portrait video.
@@ -291,9 +291,16 @@ The subject must NEVER speak, talk, or move their lips. This is a SILENT portrai
 - Examples of FORBIDDEN actions: speaking, talking, saying, mouthing words, lip sync, dialogue
 - Examples of ALLOWED actions: smiling, nodding, thinking expressions, looking around, hand gestures`;
 
+    // Use original full script for prompt generation (not truncated version)
+    const scriptForPrompts = scriptGeneration.originalScript || scriptGeneration.script;
+    console.log(`\n📝 Generating prompts from script:`);
+    console.log(`   Script length: ${scriptForPrompts.split(/\s+/).length} words`);
+    console.log(`   Using: ${scriptGeneration.originalScript ? 'originalScript (full)' : 'script (truncated)'}`);
+    console.log(`   Segments: ${segmentCount}`);
+
     const userPrompt = `Based on this script and story, create ${segmentCount} unique visual prompts for Grok Imagine with PERFECT CONTINUITY.
 
-Script: ${scriptGeneration.script}
+Script: ${scriptForPrompts}
 Story Outline: ${scriptGeneration.storyOutline}
 Tone: ${scriptGeneration.tone}
 
@@ -324,14 +331,20 @@ Every video prompt MUST specify that the subject does NOT speak, talk, or move t
 - Subject can smile, nod, think, look around - but NEVER open mouth to speak
 
 For EACH segment, provide:
-1. videoPrompt: Detailed prompt for generating a ${segmentDuration}-second video with the portrait as seed
+1. videoPrompt: EXPLOSIVE, DYNAMIC, VISUALLY STUNNING cinematic prompt for ${segmentDuration} seconds of THRILLING footage
+   - MINIMUM 4-5 SENTENCES describing FAST-PACED, EXCITING scene in VIVID, ENERGETIC detail
    - FIRST LINE MUST STATE: "Silent portrait with no mouth movement or speech"
-   - Include specific actions, expressions, lighting, camera movement
-   - MUST show logical progression from previous segment
-   - Maintain consistency with the portrait
-   - Match the script's mood and timing
-   - Specify camera angle (close-up, medium, wide) for variety
-   - Focus on physical actions, gestures, and facial expressions WITHOUT any mouth/lip movement
+   - MANDATORY MOTION: Every scene MUST have constant movement - camera motion, subject motion, environmental motion
+   - CAMERA MOVEMENTS (use multiple): Smooth push-ins, pull-outs, orbiting circles, rising cranes, gliding sliders, whip pans, dramatic reveals
+   - SPEED & PACING: Fast cuts between angles, quick dynamic movements, energetic transitions, never static
+   - LIGHTING: Golden hour backlighting, dramatic rim lights, volumetric god rays, neon accent glows, cinematic light shafts, lens flares, practical lights
+   - ENVIRONMENTS: Dramatic rooftop cityscapes with neon lights, ultra-modern glass towers, high-tech labs with holographic displays, urban nightscapes, epic outdoor vistas
+   - VISUAL EFFECTS: Fast-moving clouds, floating particles, light streaks, bokeh bursts, atmospheric haze, depth layers, reflections, rain droplets
+   - SUBJECT ACTIONS: Dynamic gestures, purposeful movements, head turns, eye contact with camera, confident body language - NEVER STATIC
+   - EMOTIONAL ENERGY: Powerful, confident, inspiring, determined, heroic, electrifying presence
+   - COLOR GRADING: Bold teal/orange contrast, rich saturation, cinematic LUTs, high dynamic range, film-like color science
+   - CONTINUITY: MUST connect logically to previous scene with natural spatial progression
+   - Example: "Silent portrait with no mouth movement. Ultra-dynamic shot that begins with a dramatic push-in from a wide establishing angle - subject stands confidently on a rain-slicked rooftop at dusk, city lights blurring into bokeh behind them as the camera rapidly orbits around their form. Volumetric god rays pierce through atmospheric fog while the subject turns their head with determination, eyes blazing with intensity. Fast whip pan to a low-angle as they step forward through swirling light particles, wind catching their jacket. Neon blue and orange lights reflect off wet surfaces. Camera rises on a smooth crane movement ending in a powerful hero shot with cinematic teal/orange grading and depth-of-field that makes the glowing cityscape explode into dreamy bokeh orbs."
 
 2. backgroundPrompt: High-quality background image prompt
    - Cinematic, professional composition

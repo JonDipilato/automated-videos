@@ -62,7 +62,7 @@ export class KieService {
           // Download the transparent portrait (use OS temp directory)
           const tempPortrait = path.join(os.tmpdir(), `portrait_${Date.now()}.png`);
           const response = await axios.get(seedImagePath, { responseType: 'arraybuffer' });
-          fs.writeFileSync(tempPortrait, response.data);
+          fs.writeFileSync(tempPortrait, Buffer.from(response.data));
           imageUrl = await this.flattenAndUpload(tempPortrait);
         } else {
           // Composited frame from previous segment - use as-is
@@ -76,7 +76,7 @@ export class KieService {
         // Download from env URL (use OS temp directory)
         const tempPortrait = path.join(os.tmpdir(), `portrait_${Date.now()}.png`);
         const response = await axios.get(this.convertToDirectUrl(process.env.PORTRAIT_URL), { responseType: 'arraybuffer' });
-        fs.writeFileSync(tempPortrait, response.data);
+        fs.writeFileSync(tempPortrait, Buffer.from(response.data));
         imageUrl = await this.flattenAndUpload(tempPortrait);
       } else {
         // Upload local file to GCS to get a public URL (for CLI usage or transition frames)
@@ -320,10 +320,10 @@ export class KieService {
       // Upload to GCS
       const publicUrl = await this.gcsStorage.uploadImage(imagePath, remoteFileName);
 
-      // Wait 2 seconds for GCS propagation to all edge servers
+      // Wait 4 seconds for GCS propagation to all edge servers
       // This prevents KIE.AI from getting 500 errors when trying to fetch the image
-      console.log(`  ↳ Waiting 2s for GCS propagation...`);
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      console.log(`  ↳ Waiting 4s for GCS propagation...`);
+      await new Promise(resolve => setTimeout(resolve, 4000));
 
       return publicUrl;
     } catch (error) {

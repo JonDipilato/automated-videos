@@ -487,7 +487,7 @@ export class FFmpegService {
         console.log(`  ↳ Downloading transparent portrait from URL...`);
 
         const response = await axios.get(originalPortraitPath, { responseType: 'arraybuffer' });
-        fs.writeFileSync(tempPortraitPath, response.data);
+        fs.writeFileSync(tempPortraitPath, Buffer.from(response.data));
 
         portraitPath = tempPortraitPath;
         downloadedPortrait = true;
