@@ -266,15 +266,21 @@ export class FFmpegService {
 
     if (Math.abs(durationDiff) > 0.5) {
       if (durationDiff > 0) {
-        // Audio is longer -> extend video by cloning last frame
+        // Audio is longer than video
+        if (durationDiff > 3.0) {
+          // Large mismatch (>3s) - this shouldn't happen with buffer segment
+          console.error(`    ❌ CRITICAL: Audio exceeds video by ${durationDiff.toFixed(2)}s!`);
+          console.error(`    This indicates insufficient video segments were generated.`);
+          console.error(`    Falling back to freeze-frame, but video quality will suffer.`);
+        }
         const padSeconds = durationDiff.toFixed(2);
-        console.warn(`    ⚠️  Duration mismatch: audio longer by ${padSeconds}s. Extending video frames.`);
+        console.warn(`    ⚠️  Duration mismatch: audio longer by ${padSeconds}s. Extending video with freeze-frame.`);
         const command = `ffmpeg -i "${videoPath}" -i "${audioPath}" -filter_complex "[0:v]tpad=stop_mode=clone:stop_duration=${padSeconds}[v]" -map "[v]" -map 1:a:0 -c:v libx264 -c:a aac -b:a 192k "${outputPath}" -y`;
         execSync(command, { stdio: 'pipe' });
       } else {
-        // Video is longer -> extend audio with silence to avoid dead air at the end
+        // Video is longer -> trim to match audio (much better than adding silence)
         const padSeconds = Math.abs(durationDiff).toFixed(2);
-        console.warn(`    ⚠️  Duration mismatch: video longer by ${padSeconds}s. Extending audio with silence.`);
+        console.log(`    ✓ Video longer by ${padSeconds}s. Trimming excess (buffer segment worked!).`);
         const command = `ffmpeg -i "${videoPath}" -i "${audioPath}" -filter_complex "[1:a]apad=pad_dur=${padSeconds}[a]" -map 0:v:0 -map "[a]" -c:v libx264 -c:a aac -b:a 192k "${outputPath}" -y`;
         execSync(command, { stdio: 'pipe' });
       }
@@ -490,17 +496,17 @@ export class FFmpegService {
       // Step 1: Extract last frame from video
       await this.extractLastFrame(videoPath, tempFramePath);
 
-      // Step 2: Apply slight blur to hide AI-generated subject (boxblur=15:5)
+      // Step 2: Apply LIGHT blur to background (reduced from 15:5 to 8:3 for better visibility)
       const blurredBgPath = outputPath.replace('.png', '_bg.png');
-      const blurCmd = `ffmpeg -i "${tempFramePath}" -vf "boxblur=15:5" "${blurredBgPath}" -y`;
+      const blurCmd = `ffmpeg -i "${tempFramePath}" -vf "boxblur=8:3" "${blurredBgPath}" -y`;
       execSync(blurCmd, { stdio: 'pipe' });
 
-      // Step 3: Composite original portrait over blurred background
-      // Center portrait, scale to 70% of frame height
-      // Use overlay with explicit alpha mode and shortest=1 to ensure proper blending
+      // Step 3: Composite original portrait over lightly blurred background
+      // Center portrait, scale to 60% of frame height for full visibility without cropping
+      // CRITICAL: Output as RGB with NO alpha channel to prevent checkerboard transparency in subsequent segments
       const compositeCmd = `ffmpeg -i "${blurredBgPath}" -i "${portraitPath}" ` +
-        `-filter_complex "[1:v]scale=-1:ih*0.7[portrait];[0:v][portrait]overlay=(W-w)/2:(H-h)/2:shortest=1:format=auto" ` +
-        `"${outputPath}" -y`;
+        `-filter_complex "[1:v]scale=-1:ih*0.60[portrait];[0:v][portrait]overlay=(W-w)/2:(H-h)/2:shortest=1:format=auto" ` +
+        `-pix_fmt rgb24 "${outputPath}" -y`;
       execSync(compositeCmd, { stdio: 'pipe' });
 
       // Step 4: Cleanup temp files

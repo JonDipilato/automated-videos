@@ -44,21 +44,61 @@ export class KieService {
       // Step 1: Get image URL
       let imageUrl: string;
 
-      // For first segment, use pre-hosted URL if available
-      // For subsequent segments (transition frames), always upload
-      if (!forceUpload && process.env.PORTRAIT_URL) {
-        // Convert Google Drive viewer URL to direct download URL if needed
-        imageUrl = this.convertToDirectUrl(process.env.PORTRAIT_URL);
-        console.log(`  ↳ Using pre-hosted portrait: ${imageUrl}`);
+      // Priority order for image source:
+      // 1. If seedImagePath is already a public URL (from web UI), use it directly
+      // 2. If first segment and PORTRAIT_URL env is set, use that
+      // 3. Otherwise, upload the local file to GCS
+
+      // For FIRST segment only (!forceUpload), flatten transparent portrait onto neutral background
+      // For subsequent segments (forceUpload=true), use composited frames as-is
+      const os = require('os');
+      let needsFlattening = false;
+
+      if (seedImagePath.startsWith('http://') || seedImagePath.startsWith('https://')) {
+        // Check if this is the first segment (URL from upload, not a composited frame)
+        if (!forceUpload && (seedImagePath.includes('/portrait-') || process.env.PORTRAIT_URL)) {
+          console.log(`  ↳ First segment: Will flatten transparent portrait onto neutral background`);
+          needsFlattening = true;
+          // Download the transparent portrait (use OS temp directory)
+          const tempPortrait = path.join(os.tmpdir(), `portrait_${Date.now()}.png`);
+          const response = await axios.get(seedImagePath, { responseType: 'arraybuffer' });
+          fs.writeFileSync(tempPortrait, response.data);
+          imageUrl = await this.flattenAndUpload(tempPortrait);
+        } else {
+          // Composited frame from previous segment - use as-is
+          imageUrl = seedImagePath;
+          console.log(`  ↳ Using composited frame from previous segment: ${path.basename(seedImagePath)}`);
+        }
+      } else if (!forceUpload && process.env.PORTRAIT_URL) {
+        // For first segment, prefer env variable if available (backward compatibility)
+        console.log(`  ↳ First segment: Will flatten transparent portrait onto neutral background`);
+        needsFlattening = true;
+        // Download from env URL (use OS temp directory)
+        const tempPortrait = path.join(os.tmpdir(), `portrait_${Date.now()}.png`);
+        const response = await axios.get(this.convertToDirectUrl(process.env.PORTRAIT_URL), { responseType: 'arraybuffer' });
+        fs.writeFileSync(tempPortrait, response.data);
+        imageUrl = await this.flattenAndUpload(tempPortrait);
       } else {
-        // Upload image to get a public URL (for transition frames or if no env URL)
-        imageUrl = await this.uploadImageToTemp(seedImagePath);
+        // Upload local file to GCS to get a public URL (for CLI usage or transition frames)
+        if (!forceUpload) {
+          // First segment - flatten it
+          console.log(`  ↳ First segment: Will flatten transparent portrait onto neutral background`);
+          imageUrl = await this.flattenAndUpload(seedImagePath);
+        } else {
+          // Subsequent segments - composited frames, use as-is
+          imageUrl = await this.uploadImageToTemp(seedImagePath);
+        }
       }
 
       // Step 2: Create video generation task
+      const enhancedPrompt = this.enhanceVideoPrompt(grokPrompt.videoPrompt);
+
+      console.log(`  ↳ Original prompt: ${grokPrompt.videoPrompt.substring(0, 100)}...`);
+      console.log(`  ↳ Enhanced prompt: ${enhancedPrompt}`);
+
       const taskId = await this.createVideoTask(
         imageUrl,
-        this.enhanceVideoPrompt(grokPrompt.videoPrompt),
+        enhancedPrompt,
         'normal' // mode: fun, normal, or spicy
       );
 
@@ -226,6 +266,48 @@ export class KieService {
   }
 
   /**
+   * Flattens transparent portrait onto neutral background and uploads to GCS
+   * Used for first segment to prevent checkerboard transparency issues
+   */
+  private async flattenAndUpload(transparentPortraitPath: string): Promise<string> {
+    try {
+      const { execSync } = require('child_process');
+      const timestamp = Date.now();
+      const flattenedPath = path.join(path.dirname(transparentPortraitPath), `flattened_${timestamp}.png`);
+
+      console.log(`  ↳ Flattening transparent portrait onto neutral background...`);
+
+      // Create a soft blurred gradient background (neutral gray with subtle gradient)
+      // Then composite the transparent portrait on top
+      const flattenCmd = `ffmpeg -f lavfi -i "color=c=#808080:s=1080x1920:d=1" ` +
+        `-i "${transparentPortraitPath}" ` +
+        `-filter_complex "[0:v]boxblur=50:5[bg];[bg][1:v]overlay=(W-w)/2:(H-h)/2:format=auto" ` +
+        `-frames:v 1 "${flattenedPath}" -y`;
+
+      execSync(flattenCmd, { stdio: 'pipe' });
+      console.log(`  ↳ Portrait flattened successfully`);
+
+      // Upload the flattened image
+      const publicUrl = await this.uploadImageToTemp(flattenedPath);
+
+      // Cleanup temp files
+      const os = require('os');
+      if (fs.existsSync(flattenedPath)) {
+        fs.unlinkSync(flattenedPath);
+      }
+      if (fs.existsSync(transparentPortraitPath) && transparentPortraitPath.includes(os.tmpdir())) {
+        fs.unlinkSync(transparentPortraitPath);
+      }
+
+      return publicUrl;
+    } catch (error) {
+      console.error('Portrait flattening failed:', error);
+      // Fallback to uploading original if flattening fails
+      return await this.uploadImageToTemp(transparentPortraitPath);
+    }
+  }
+
+  /**
    * Uploads image to Google Cloud Storage and returns public URL
    */
   private async uploadImageToTemp(imagePath: string): Promise<string> {
@@ -237,6 +319,11 @@ export class KieService {
 
       // Upload to GCS
       const publicUrl = await this.gcsStorage.uploadImage(imagePath, remoteFileName);
+
+      // Wait 2 seconds for GCS propagation to all edge servers
+      // This prevents KIE.AI from getting 500 errors when trying to fetch the image
+      console.log(`  ↳ Waiting 2s for GCS propagation...`);
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
       return publicUrl;
     } catch (error) {
@@ -262,32 +349,40 @@ export class KieService {
   }
 
   /**
-   * Simplifies prompt to focus on motion/action only (KIE.AI prefers simple prompts)
+   * Enhances prompt for KIE.AI while preserving dynamic details
    */
   private enhanceVideoPrompt(prompt: string): string {
-    // KIE.AI works better with simple, action-focused prompts
-    // Remove complex cinematography jargon and keep core actions
+    // KIE.AI works better with action-focused prompts
+    // Keep dynamic movement but simplify overly technical jargon
 
-    // Clean up technical terms that KIE might not understand well
-    let simplified = prompt
-      .replace(/cinematic|cinematography|composition/gi, '')
-      .replace(/golden hour|dramatic lighting|soft lighting/gi, 'natural lighting')
-      .replace(/\b(shot|frame|camera)\b/gi, '')
-      .replace(/\b(close-up|medium shot|wide shot|establishing shot)\b/gi, 'view')
-      .replace(/\bdepth of field\b/gi, '')
-      .replace(/\b(rack focus|dolly|crane|steadicam)\b/gi, 'movement')
+    let enhanced = prompt
+      // Keep dynamic camera movements but simplify terminology
+      .replace(/cinematography/gi, '')
+      .replace(/golden hour lighting/gi, 'warm lighting')
+      .replace(/depth of field/gi, '')
+      // Clean up redundant technical terms
       .replace(/\s+/g, ' ')
       .trim();
 
-    // Keep it concise - KIE prefers 1-2 sentences max
-    const sentences = simplified.split(/[.!?]+/).filter(s => s.trim().length > 0);
-    simplified = sentences.slice(0, 2).join('. ').trim();
+    // Don't over-truncate - keep all the dynamic details!
+    // KIE.AI can handle 3-4 sentences if they're action-focused
+    const sentences = enhanced.split(/[.!?]+/).filter(s => s.trim().length > 0);
 
-    // If still too long or empty, use a reasonable default
-    if (!simplified || simplified.length < 10) {
-      simplified = "Person speaking with natural expressions and subtle movements";
+    // Keep up to 4 sentences to preserve all the movement details
+    if (sentences.length > 4) {
+      enhanced = sentences.slice(0, 4).join('. ').trim() + '.';
     }
 
-    return simplified;
+    // If still too long or empty, use a reasonable default
+    if (!enhanced || enhanced.length < 10) {
+      enhanced = "Person speaking with natural expressions and subtle movements";
+    }
+
+    // Add final period if missing
+    if (!/[.!?]$/.test(enhanced)) {
+      enhanced += '.';
+    }
+
+    return enhanced;
   }
 }

@@ -142,6 +142,13 @@ export class GrokService {
 
     console.log('🔗 Generating segments with frame chaining for perfect continuity...');
 
+    // Create images directory for transition frames (CRITICAL: prevents silent failures)
+    const imagesDir = path.resolve(outputDir, '../images');
+    if (!fs.existsSync(imagesDir)) {
+      fs.mkdirSync(imagesDir, { recursive: true });
+      console.log(`   Created transition frames directory: ${imagesDir}`);
+    }
+
     for (let i = 0; i < grokPrompts.length; i++) {
       const prompt = grokPrompts[i];
 
@@ -167,20 +174,30 @@ export class GrokService {
       // If successful and not the last segment, extract and composite frame for next segment
       if (result.status === 'completed' && i < grokPrompts.length - 1) {
         try {
-          const compositedFramePath = path.join(
-            outputDir,
-            `../images/transition_composite_${i}.png`
+          // Use absolute path resolution to avoid fragile relative paths
+          const compositedFramePath = path.resolve(
+            imagesDir,
+            `transition_composite_${i}.png`
           );
+
+          console.log(`   Extracting last frame to: ${compositedFramePath}`);
 
           // Extract last frame AND composite original portrait over it
           await ffmpegExtractLastFrame(result.videoUrl, compositedFramePath);
+
+          // Verify file was actually created
+          if (!fs.existsSync(compositedFramePath)) {
+            throw new Error(`Composited frame was not created at ${compositedFramePath}`);
+          }
 
           // Update seed for next iteration
           currentSeedPath = compositedFramePath;
 
           console.log(`   ✓ Composited frame chained to next segment`);
-        } catch (error) {
-          console.warn(`   ⚠️  Frame compositing failed, using original seed for next segment`);
+        } catch (error: any) {
+          console.error(`   ❌ Frame compositing failed: ${error.message}`);
+          console.error(`   Full error:`, error);
+          console.warn(`   ⚠️  Falling back to original seed for next segment`);
           // Continue with original seed if compositing fails
         }
       }
