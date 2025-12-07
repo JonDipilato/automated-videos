@@ -71,18 +71,18 @@ export class OpenAIService {
     console.log(`  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
     const systemPrompt = `You are a senior YouTube Shorts script editor who writes tight, high-value narratives.
-You specialize in KJV Bible wisdom, AI automation, and business strategy.
+You specialize in creating powerful, inspiring content that resonates with modern audiences.
 Your scripts are concrete, example-driven, and avoid corporate fluff.
 The script should be conversational, dynamic, and designed for AI voice narration.
 CRITICAL: You MUST strictly adhere to the word count limit provided and use CLEAN text formatting.`;
 
     const userPrompt = `Create a compelling ${targetDuration}-second video script about: "${topic}"
 
-CONTENT THEMES (must include at least one):
-- KJV Bible principles and wisdom applied to modern life
-- AI automation strategies and practical implementation
-- Business growth, entrepreneurship, and wealth building
-- Intersection of faith, technology, and commerce
+CONTENT APPROACH:
+- Match the tone and theme to the specific topic provided
+- Provide actionable, valuable insights relevant to the topic
+- Use modern, relatable language and examples
+- Focus on transformation and empowerment
 
 CRITICAL CONSTRAINT - WORD COUNT:
 - Target: ${targetWordCount} words (STRICT LIMIT)
@@ -271,17 +271,18 @@ Format as JSON with fields: script, storyOutline, keyPoints (array), tone, estim
       }];
     }
     const systemPrompt = `You are an elite cinematographer and visual storytelling expert for Grok's video generation AI.
-Create VISUALLY STUNNING, DRAMATIC, and CINEMATIC prompts that produce BREATHTAKING, EPIC results with PERFECT CONTINUITY.
-Focus on DRAMATIC lighting, DYNAMIC compositions, POWERFUL mood, and EXCITING scene transitions that captivate viewers.
+Create VISUALLY STUNNING, FUTURISTIC, and CINEMATIC prompts that produce BREATHTAKING, EPIC results with PERFECT CONTINUITY.
+Focus on FUTURISTIC TECH, AI AESTHETICS, NEON COLORS, and EXCITING scene transitions that captivate viewers.
 CRITICAL: Every scene must flow naturally with NO teleporting or logic breaks.
 
-🎬 VISUAL EXCELLENCE REQUIREMENTS:
-- DRAMATIC LIGHTING: Golden hour, rim lighting, volumetric light rays, neon glows, cinematic contrast
-- DYNAMIC CAMERA WORK: Low angles for power, dutch angles for energy, dramatic zooms, sweeping movements
-- EXCITING ENVIRONMENTS: Rooftop cityscapes, modern glass offices, tech labs, urban landscapes, dramatic outdoor settings
-- VISUAL INTEREST: Reflections, dramatic shadows, depth layers, atmospheric effects (fog, rain, particles)
-- CINEMATIC STYLE: Film-like depth of field, color grading (teal/orange, high contrast), lens flares, bokeh
-- EMOTIONAL IMPACT: Heroic poses, determined expressions, powerful body language that inspires
+🎬 FUTURISTIC VISUAL EXCELLENCE REQUIREMENTS:
+- FUTURISTIC LIGHTING: Vibrant neon glows (cyan, magenta, purple), holographic effects, LED rim lighting, volumetric laser beams, electric blue accents
+- TECH/AI AESTHETICS: Holographic interfaces, floating data visualizations, neural network patterns, circuit board textures, digital particles
+- DYNAMIC CAMERA WORK: Low angles for power, dutch angles for energy, dramatic zooms, sweeping movements through tech environments
+- FUTURISTIC ENVIRONMENTS: High-tech command centers, holographic displays, neon-lit cityscapes, AI server rooms with glowing racks, floating platforms, glass towers with LED patterns
+- VISUAL EFFECTS: Glowing particles, data streams, holographic projections, electric arcs, matrix-style code rain, aurora effects
+- CINEMATIC STYLE: Cyberpunk color grading (teal/magenta, purple/orange), high contrast neon vs darkness, lens flares from tech lights
+- EMOTIONAL IMPACT: Powerful poses amidst futuristic tech, confident expressions with holographic reflections, commanding presence in high-tech spaces
 
 🚫 ABSOLUTE REQUIREMENT - NO SPEECH:
 The subject must NEVER speak, talk, or move their lips. This is a SILENT portrait video.
@@ -331,20 +332,20 @@ Every video prompt MUST specify that the subject does NOT speak, talk, or move t
 - Subject can smile, nod, think, look around - but NEVER open mouth to speak
 
 For EACH segment, provide:
-1. videoPrompt: EXPLOSIVE, DYNAMIC, VISUALLY STUNNING cinematic prompt for ${segmentDuration} seconds of THRILLING footage
+1. videoPrompt: EXPLOSIVE, DYNAMIC, FUTURISTIC cinematic prompt for ${segmentDuration} seconds of THRILLING footage
    - MINIMUM 4-5 SENTENCES describing FAST-PACED, EXCITING scene in VIVID, ENERGETIC detail
    - FIRST LINE MUST STATE: "Silent portrait with no mouth movement or speech"
    - MANDATORY MOTION: Every scene MUST have constant movement - camera motion, subject motion, environmental motion
    - CAMERA MOVEMENTS (use multiple): Smooth push-ins, pull-outs, orbiting circles, rising cranes, gliding sliders, whip pans, dramatic reveals
    - SPEED & PACING: Fast cuts between angles, quick dynamic movements, energetic transitions, never static
-   - LIGHTING: Golden hour backlighting, dramatic rim lights, volumetric god rays, neon accent glows, cinematic light shafts, lens flares, practical lights
-   - ENVIRONMENTS: Dramatic rooftop cityscapes with neon lights, ultra-modern glass towers, high-tech labs with holographic displays, urban nightscapes, epic outdoor vistas
-   - VISUAL EFFECTS: Fast-moving clouds, floating particles, light streaks, bokeh bursts, atmospheric haze, depth layers, reflections, rain droplets
-   - SUBJECT ACTIONS: Dynamic gestures, purposeful movements, head turns, eye contact with camera, confident body language - NEVER STATIC
-   - EMOTIONAL ENERGY: Powerful, confident, inspiring, determined, heroic, electrifying presence
-   - COLOR GRADING: Bold teal/orange contrast, rich saturation, cinematic LUTs, high dynamic range, film-like color science
+   - FUTURISTIC LIGHTING: Vibrant neon glows (cyan, magenta, purple, electric blue), holographic light effects, LED rim lighting, volumetric laser beams, matrix-style data streams
+   - TECH ENVIRONMENTS: Futuristic command centers with holographic displays, AI server rooms with glowing racks, neon-lit cyberpunk cityscapes, floating platforms, glass towers with pulsing LED patterns, neural network visualizations
+   - VISUAL EFFECTS: Floating holographic interfaces, glowing data particles, electric arcs, aurora-like energy waves, digital rain, circuit patterns, pulsing light trails
+   - SUBJECT ACTIONS: Dynamic gestures interacting with holograms, purposeful movements through tech spaces, head turns with holographic reflections, confident body language - NEVER STATIC
+   - EMOTIONAL ENERGY: Powerful, futuristic, inspiring, tech-forward, commanding presence, next-level confidence
+   - COLOR GRADING: Vibrant cyberpunk palette (teal/magenta, purple/orange, electric blue/hot pink), high contrast neon vs deep shadows, cinematic sci-fi aesthetic
    - CONTINUITY: MUST connect logically to previous scene with natural spatial progression
-   - Example: "Silent portrait with no mouth movement. Ultra-dynamic shot that begins with a dramatic push-in from a wide establishing angle - subject stands confidently on a rain-slicked rooftop at dusk, city lights blurring into bokeh behind them as the camera rapidly orbits around their form. Volumetric god rays pierce through atmospheric fog while the subject turns their head with determination, eyes blazing with intensity. Fast whip pan to a low-angle as they step forward through swirling light particles, wind catching their jacket. Neon blue and orange lights reflect off wet surfaces. Camera rises on a smooth crane movement ending in a powerful hero shot with cinematic teal/orange grading and depth-of-field that makes the glowing cityscape explode into dreamy bokeh orbs."
+   - Example: "Silent portrait with no mouth movement. Ultra-dynamic shot in a futuristic AI command center - subject stands confidently surrounded by floating holographic displays showing neural network visualizations. The camera rapidly orbits as neon cyan and magenta lights pulse rhythmically. Volumetric laser beams cut through the atmospheric haze while glowing data particles swirl around the subject. Fast whip pan reveals a massive curved display wall with real-time AI processing visuals. Electric blue rim lighting carves out the subject's silhouette against the purple-tinged darkness. Camera rises dramatically as holographic interfaces materialize around them, ending in a powerful hero shot with cyberpunk color grading and bokeh from hundreds of tiny LED indicators."
 
 2. backgroundPrompt: High-quality background image prompt
    - Cinematic, professional composition

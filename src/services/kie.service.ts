@@ -52,13 +52,11 @@ export class KieService {
       // For FIRST segment only (!forceUpload), flatten transparent portrait onto neutral background
       // For subsequent segments (forceUpload=true), use composited frames as-is
       const os = require('os');
-      let needsFlattening = false;
 
       if (seedImagePath.startsWith('http://') || seedImagePath.startsWith('https://')) {
         // Check if this is the first segment (URL from upload, not a composited frame)
         if (!forceUpload && (seedImagePath.includes('/portrait-') || process.env.PORTRAIT_URL)) {
           console.log(`  ↳ First segment: Will flatten transparent portrait onto neutral background`);
-          needsFlattening = true;
           // Download the transparent portrait (use OS temp directory)
           const tempPortrait = path.join(os.tmpdir(), `portrait_${Date.now()}.png`);
           const response = await axios.get(seedImagePath, { responseType: 'arraybuffer' });
@@ -72,7 +70,6 @@ export class KieService {
       } else if (!forceUpload && process.env.PORTRAIT_URL) {
         // For first segment, prefer env variable if available (backward compatibility)
         console.log(`  ↳ First segment: Will flatten transparent portrait onto neutral background`);
-        needsFlattening = true;
         // Download from env URL (use OS temp directory)
         const tempPortrait = path.join(os.tmpdir(), `portrait_${Date.now()}.png`);
         const response = await axios.get(this.convertToDirectUrl(process.env.PORTRAIT_URL), { responseType: 'arraybuffer' });
@@ -268,24 +265,27 @@ export class KieService {
   /**
    * Flattens transparent portrait onto neutral background and uploads to GCS
    * Used for first segment to prevent checkerboard transparency issues
+   * CRITICAL: Outputs JPG to guarantee no alpha channel can exist
    */
   private async flattenAndUpload(transparentPortraitPath: string): Promise<string> {
     try {
       const { execSync } = require('child_process');
       const timestamp = Date.now();
-      const flattenedPath = path.join(path.dirname(transparentPortraitPath), `flattened_${timestamp}.png`);
+      // CRITICAL: Output as JPG - JPG format cannot store transparency
+      const flattenedPath = path.join(path.dirname(transparentPortraitPath), `flattened_${timestamp}.jpg`);
 
-      console.log(`  ↳ Flattening transparent portrait onto neutral background...`);
+      console.log(`  ↳ Flattening transparent portrait onto neutral background (JPG output)...`);
 
       // Create a soft blurred gradient background (neutral gray with subtle gradient)
       // Then composite the transparent portrait on top
+      // CRITICAL: format=rgb forces RGB output, -qscale:v 2 is high quality JPG
       const flattenCmd = `ffmpeg -f lavfi -i "color=c=#808080:s=1080x1920:d=1" ` +
         `-i "${transparentPortraitPath}" ` +
-        `-filter_complex "[0:v]boxblur=50:5[bg];[bg][1:v]overlay=(W-w)/2:(H-h)/2:format=auto" ` +
-        `-frames:v 1 "${flattenedPath}" -y`;
+        `-filter_complex "[0:v]boxblur=50:5[bg];[bg][1:v]overlay=(W-w)/2:(H-h)/2:format=rgb" ` +
+        `-frames:v 1 -qscale:v 2 "${flattenedPath}" -y`;
 
       execSync(flattenCmd, { stdio: 'pipe' });
-      console.log(`  ↳ Portrait flattened successfully`);
+      console.log(`  ↳ Portrait flattened successfully as JPG (guaranteed opaque)`);
 
       // Upload the flattened image
       const publicUrl = await this.uploadImageToTemp(flattenedPath);
@@ -302,8 +302,8 @@ export class KieService {
       return publicUrl;
     } catch (error) {
       console.error('Portrait flattening failed:', error);
-      // Fallback to uploading original if flattening fails
-      return await this.uploadImageToTemp(transparentPortraitPath);
+      console.error('CRITICAL: Cannot proceed with transparent portrait - would cause checkerboard!');
+      throw new Error(`Portrait flattening failed: ${error}. Cannot use transparent portrait as seed.`);
     }
   }
 

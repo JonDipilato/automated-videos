@@ -177,23 +177,32 @@ export class GrokService {
           // Use absolute path resolution to avoid fragile relative paths
           const compositedFramePath = path.resolve(
             imagesDir,
-            `transition_composite_${i}.png`
+            `transition_composite_${i}.jpg`
           );
 
-          console.log(`   Extracting last frame to: ${compositedFramePath}`);
+          console.log(`   Extracting last frame from: ${result.videoUrl}`);
+          console.log(`   Compositing with portrait to: ${compositedFramePath}`);
 
           // Extract last frame AND composite original portrait over it
+          // This creates a seamless transition: the new scene starts with the exact
+          // last frame of the previous scene, with the portrait overlaid on top
           await ffmpegExtractLastFrame(result.videoUrl, compositedFramePath);
 
-          // Verify file was actually created
+          // Verify file was actually created and has proper size
           if (!fs.existsSync(compositedFramePath)) {
             throw new Error(`Composited frame was not created at ${compositedFramePath}`);
           }
 
-          // Update seed for next iteration
+          const stats = fs.statSync(compositedFramePath);
+          if (stats.size === 0) {
+            throw new Error(`Composited frame is empty (0 bytes)`);
+          }
+
+          // Update seed for next iteration - this ensures the next scene starts
+          // with THIS composited frame (previous video frame + portrait overlay)
           currentSeedPath = compositedFramePath;
 
-          console.log(`   ✓ Composited frame chained to next segment`);
+          console.log(`   ✓ Composited frame created (${(stats.size / 1024).toFixed(1)}KB) and chained to next segment`);
         } catch (error: any) {
           console.error(`   ❌ Frame compositing failed: ${error.message}`);
           console.error(`   Full error:`, error);

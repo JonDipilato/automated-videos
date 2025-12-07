@@ -477,13 +477,16 @@ export class FFmpegService {
     outputPath: string
   ): Promise<string> {
     try {
-      const tempFramePath = outputPath.replace('.png', '_temp.png');
+      // Determine file extension for proper temp file naming
+      const ext = path.extname(outputPath); // .jpg or .png
+      const baseName = outputPath.replace(ext, '');
+      const tempFramePath = `${baseName}_temp.png`; // Always PNG for temp (intermediate)
       let portraitPath = originalPortraitPath;
       let downloadedPortrait = false;
 
       // Step 0: If portrait is a URL, download it first
       if (originalPortraitPath.startsWith('http://') || originalPortraitPath.startsWith('https://')) {
-        const tempPortraitPath = outputPath.replace('.png', '_portrait.png');
+        const tempPortraitPath = `${baseName}_portrait.png`;
         console.log(`  ↳ Downloading transparent portrait from URL...`);
 
         const response = await axios.get(originalPortraitPath, { responseType: 'arraybuffer' });
@@ -493,28 +496,57 @@ export class FFmpegService {
         downloadedPortrait = true;
       }
 
-      // Step 1: Extract last frame from video
+      // Step 1: Extract last frame from video (0.1s before end to avoid cut-off)
       await this.extractLastFrame(videoPath, tempFramePath);
 
-      // Step 2: Apply LIGHT blur to background (reduced from 15:5 to 8:3 for better visibility)
-      const blurredBgPath = outputPath.replace('.png', '_bg.png');
-      const blurCmd = `ffmpeg -i "${tempFramePath}" -vf "boxblur=8:3" "${blurredBgPath}" -y`;
-      execSync(blurCmd, { stdio: 'pipe' });
+      // Step 2: Composite portrait directly on extracted frame (NO BLUR for sharp background)
+      // Use scale2ref to scale portrait relative to BACKGROUND frame height (not portrait's own height)
+      // This prevents cut-off when portrait is larger than the video frame
+      // Scale to 85% of background height for full visibility without cropping
+      // CRITICAL: Output as JPG to completely eliminate any alpha channel
+      // JPG format physically cannot store transparency - KIE.AI gets a fully opaque image
+      const isJpg = ext.toLowerCase() === '.jpg' || ext.toLowerCase() === '.jpeg';
 
-      // Step 3: Composite original portrait over lightly blurred background
-      // Center portrait, scale to 60% of frame height for full visibility without cropping
-      // CRITICAL: Output as RGB with NO alpha channel to prevent checkerboard transparency in subsequent segments
-      const compositeCmd = `ffmpeg -i "${blurredBgPath}" -i "${portraitPath}" ` +
-        `-filter_complex "[1:v]scale=-1:ih*0.60[portrait];[0:v][portrait]overlay=(W-w)/2:(H-h)/2:shortest=1:format=auto" ` +
-        `-pix_fmt rgb24 "${outputPath}" -y`;
+      let compositeCmd: string;
+      if (isJpg) {
+        // For JPG output: Use MJPEG codec with high quality (-qscale:v 2)
+        // This guarantees no transparency can exist in the output
+        compositeCmd = `ffmpeg -i "${tempFramePath}" -i "${portraitPath}" ` +
+          `-filter_complex "[1:v][0:v]scale2ref=-1:ih*0.85[portrait][bg];` +
+          `[bg][portrait]overlay=(W-w)/2:(H-h)/2:format=rgb[composited]" ` +
+          `-map "[composited]" -frames:v 1 -qscale:v 2 "${outputPath}" -y`;
+      } else {
+        // For PNG output: Force RGB24 pixel format (no alpha channel)
+        compositeCmd = `ffmpeg -i "${tempFramePath}" -i "${portraitPath}" ` +
+          `-filter_complex "[1:v][0:v]scale2ref=-1:ih*0.85[portrait][bg];` +
+          `[bg][portrait]overlay=(W-w)/2:(H-h)/2:format=rgb,format=rgb24[composited]" ` +
+          `-map "[composited]" -frames:v 1 -pix_fmt rgb24 "${outputPath}" -y`;
+      }
+
       execSync(compositeCmd, { stdio: 'pipe' });
+
+      // Step 3: Verify the composited frame (JPG is guaranteed opaque, PNG needs verification)
+      if (fs.existsSync(outputPath)) {
+        if (isJpg) {
+          console.log(`  ✓ Composited frame saved as JPG (guaranteed opaque - no alpha possible)`);
+        } else {
+          try {
+            const verifyCmd = `ffprobe -v error -select_streams v:0 -show_entries stream=pix_fmt -of default=noprint_wrappers=1:nokey=1 "${outputPath}"`;
+            const pixFmt = execSync(verifyCmd, { encoding: 'utf8' }).trim();
+            if (pixFmt !== 'rgb24') {
+              console.warn(`  ⚠️  Warning: Composited frame is ${pixFmt}, not rgb24 - may have alpha channel`);
+            } else {
+              console.log(`  ✓ Composited frame verified as RGB (no alpha channel)`);
+            }
+          } catch (e) {
+            console.warn('  ⚠️  Could not verify pixel format');
+          }
+        }
+      }
 
       // Step 4: Cleanup temp files
       if (fs.existsSync(tempFramePath)) {
         fs.unlinkSync(tempFramePath);
-      }
-      if (fs.existsSync(blurredBgPath)) {
-        fs.unlinkSync(blurredBgPath);
       }
       if (downloadedPortrait && fs.existsSync(portraitPath)) {
         fs.unlinkSync(portraitPath);
