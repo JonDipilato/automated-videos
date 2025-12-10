@@ -1,5 +1,6 @@
 import * as dotenv from 'dotenv';
 import * as path from 'path';
+import * as fs from 'fs';
 import {
   VideoGenerationConfig,
   Platform,
@@ -7,8 +8,30 @@ import {
   ElevenLabsVoiceSettings,
 } from '../types';
 
-// Load environment variables
-dotenv.config();
+// Load environment variables from multiple possible locations
+const envPaths = [
+  path.join(process.cwd(), '.env'),           // Current directory (web/)
+  path.join(process.cwd(), '..', '.env'),     // Parent directory (automated-videos/)
+  path.join(__dirname, '../../.env'),         // Relative to compiled source
+  path.join(__dirname, '../../../.env'),      // One more level up
+];
+
+let envLoaded = false;
+for (const envPath of envPaths) {
+  if (fs.existsSync(envPath)) {
+    const result = dotenv.config({ path: envPath });
+    if (!result.error) {
+      console.log(`✅ Loaded .env from: ${envPath}`);
+      envLoaded = true;
+      break;
+    }
+  }
+}
+
+if (!envLoaded) {
+  console.warn('⚠️ No .env file found in any expected location');
+  console.warn('Tried paths:', envPaths);
+}
 
 export class ConfigLoader {
   /**

@@ -129,20 +129,34 @@ export class GrokService {
 
   /**
    * Generates video segments with frame chaining for perfect continuity
-   * Each segment uses the last frame of the previous segment as its seed
+   * Each segment uses the last frame of the previous segment (with portrait composited) as its seed
+   *
+   * Flow:
+   * 1. Segment 1: Use original portrait → KIE.AI generates video
+   * 2. Extract last frame from segment 1 video
+   * 3. Composite original transparent portrait OVER the extracted frame
+   * 4. Upload composited frame to GCS
+   * 5. Segment 2: Use composited frame as seed → KIE.AI generates video
+   * 6. Repeat for all segments
+   *
+   * This creates visual continuity: same character, evolving backgrounds
    */
   async generateVideoSegmentsWithFrameChaining(
     grokPrompts: GrokPrompt[],
     initialSeedImagePath: string,
     outputDir: string,
-    ffmpegExtractLastFrame: (videoPath: string, outputPath: string) => Promise<string>
+    extractAndCompositeFrame: (videoPath: string, outputPath: string) => Promise<string>
   ): Promise<GrokVideoResponse[]> {
     const results: GrokVideoResponse[] = [];
     let currentSeedPath = initialSeedImagePath;
 
-    console.log('🔗 Generating segments with frame chaining for perfect continuity...');
+    console.log('');
+    console.log('🔗 FRAME CHAINING ENABLED');
+    console.log('   Each segment\'s last frame becomes the next segment\'s seed');
+    console.log(`   Initial seed: ${initialSeedImagePath}`);
+    console.log('');
 
-    // Create images directory for transition frames (CRITICAL: prevents silent failures)
+    // Create images directory for transition frames
     const imagesDir = path.resolve(outputDir, '../images');
     if (!fs.existsSync(imagesDir)) {
       fs.mkdirSync(imagesDir, { recursive: true });
@@ -151,68 +165,104 @@ export class GrokService {
 
     for (let i = 0; i < grokPrompts.length; i++) {
       const prompt = grokPrompts[i];
+      const isFirstSegment = i === 0;
+      const isLastSegment = i === grokPrompts.length - 1;
 
-      console.log(`\n📹 Segment ${i + 1}/${grokPrompts.length}:`);
-      console.log(`   Using seed: ${path.basename(currentSeedPath)}`);
+      console.log(`\n${'='.repeat(60)}`);
+      console.log(`📹 SEGMENT ${i + 1}/${grokPrompts.length}`);
+      console.log(`${'='.repeat(60)}`);
+      console.log(`   Seed image: ${currentSeedPath.substring(0, 80)}${currentSeedPath.length > 80 ? '...' : ''}`);
+      console.log(`   Prompt: ${prompt.videoPrompt.substring(0, 100)}...`);
       if (prompt.continuityNote) {
         console.log(`   Continuity: ${prompt.continuityNote}`);
       }
 
-      // For first segment: use pre-hosted URL if available
-      // For subsequent segments: force upload of extracted transition frames
-      const forceUpload = i > 0;
-
       // Generate video segment using current seed
+      // forceUpload=true for segments after the first (they use composited frames)
       const result = await this.generateVideo(
         prompt,
         currentSeedPath,
         outputDir,
-        forceUpload
+        !isFirstSegment  // forceUpload for all segments after first
       );
       results.push(result);
 
-      // If successful and not the last segment, extract and composite frame for next segment
-      if (result.status === 'completed' && i < grokPrompts.length - 1) {
+      if (result.status !== 'completed') {
+        console.error(`   ❌ Segment ${i + 1} failed to generate`);
+        continue;
+      }
+
+      console.log(`   ✓ Segment ${i + 1} video generated: ${result.videoUrl}`);
+
+      // If not the last segment, prepare the seed for the next segment
+      if (!isLastSegment) {
+        console.log('');
+        console.log(`   🔄 FRAME CHAINING: Preparing seed for segment ${i + 2}...`);
+
         try {
-          // Use absolute path resolution to avoid fragile relative paths
           const compositedFramePath = path.resolve(
             imagesDir,
             `transition_composite_${i}.jpg`
           );
 
-          console.log(`   Extracting last frame from: ${result.videoUrl}`);
-          console.log(`   Compositing with portrait to: ${compositedFramePath}`);
+          // Step 1: Extract last frame from video AND composite portrait over it
+          console.log(`   Step 1: Extracting last frame from video...`);
+          console.log(`           Video: ${result.videoUrl}`);
+          console.log(`           Output: ${compositedFramePath}`);
 
-          // Extract last frame AND composite original portrait over it
-          // This creates a seamless transition: the new scene starts with the exact
-          // last frame of the previous scene, with the portrait overlaid on top
-          await ffmpegExtractLastFrame(result.videoUrl, compositedFramePath);
+          await extractAndCompositeFrame(result.videoUrl, compositedFramePath);
 
-          // Verify file was actually created and has proper size
+          // Step 2: Verify the composited frame was created
           if (!fs.existsSync(compositedFramePath)) {
             throw new Error(`Composited frame was not created at ${compositedFramePath}`);
           }
 
           const stats = fs.statSync(compositedFramePath);
-          if (stats.size === 0) {
-            throw new Error(`Composited frame is empty (0 bytes)`);
+          if (stats.size < 1000) {
+            throw new Error(`Composited frame is too small (${stats.size} bytes) - likely corrupted`);
           }
 
-          // Update seed for next iteration - this ensures the next scene starts
-          // with THIS composited frame (previous video frame + portrait overlay)
-          currentSeedPath = compositedFramePath;
+          console.log(`   Step 2: Composited frame created (${(stats.size / 1024).toFixed(1)}KB)`);
 
-          console.log(`   ✓ Composited frame created (${(stats.size / 1024).toFixed(1)}KB) and chained to next segment`);
+          // Step 3: Upload to GCS
+          console.log(`   Step 3: Uploading composited frame to GCS...`);
+          const { GCSStorageService } = await import('./gcs-storage.service');
+          const gcsStorage = new GCSStorageService();
+          const timestamp = Date.now();
+          const remoteFileName = `composited_${timestamp}_segment_${i}.jpg`;
+
+          const gcsUrl = await gcsStorage.uploadImage(compositedFramePath, remoteFileName);
+
+          // Step 4: Wait for GCS propagation
+          console.log(`   Step 4: Waiting 4s for GCS propagation...`);
+          await new Promise(resolve => setTimeout(resolve, 4000));
+
+          // Step 5: Update seed for next segment
+          const previousSeed = currentSeedPath;
+          currentSeedPath = gcsUrl;
+
+          console.log(`   ✅ FRAME CHAIN COMPLETE`);
+          console.log(`      Previous seed: ${previousSeed.substring(0, 60)}...`);
+          console.log(`      New seed (GCS): ${gcsUrl}`);
+          console.log(`      Segment ${i + 2} will use this composited frame`);
+
         } catch (error: any) {
-          console.error(`   ❌ Frame compositing failed: ${error.message}`);
+          console.error(`   ❌ FRAME CHAINING FAILED: ${error.message}`);
           console.error(`   Full error:`, error);
-          console.warn(`   ⚠️  Falling back to original seed for next segment`);
-          // Continue with original seed if compositing fails
+          console.warn(`   ⚠️  Segment ${i + 2} will use the ORIGINAL portrait (no continuity)`);
+          // Reset to initial seed if compositing fails - at least the video will generate
+          currentSeedPath = initialSeedImagePath;
         }
       }
     }
 
-    console.log('\n✓ Frame-chained generation complete!');
+    console.log('');
+    console.log('=' .repeat(60));
+    console.log('✓ Frame-chained generation complete!');
+    console.log(`   Total segments: ${results.length}`);
+    console.log(`   Successful: ${results.filter(r => r.status === 'completed').length}`);
+    console.log('=' .repeat(60));
+
     return results;
   }
 

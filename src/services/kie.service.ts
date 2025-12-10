@@ -45,46 +45,24 @@ export class KieService {
       let imageUrl: string;
 
       // Priority order for image source:
-      // 1. If seedImagePath is already a public URL (from web UI), use it directly
-      // 2. If first segment and PORTRAIT_URL env is set, use that
-      // 3. Otherwise, upload the local file to GCS
-
-      // For FIRST segment only (!forceUpload), flatten transparent portrait onto neutral background
-      // For subsequent segments (forceUpload=true), use composited frames as-is
-      const os = require('os');
+      // 1. If seedImagePath is already a public URL (from web UI or GCS), use it directly
+      // 2. If local file, upload to GCS first
+      //
+      // NO flattening needed - use portraits as-is
+      // For subsequent segments, composited frames (last frame + portrait) are used
 
       if (seedImagePath.startsWith('http://') || seedImagePath.startsWith('https://')) {
-        // Check if this is the first segment (URL from upload, not a composited frame)
-        if (!forceUpload && (seedImagePath.includes('/portrait-') || process.env.PORTRAIT_URL)) {
-          console.log(`  ↳ First segment: Will flatten transparent portrait onto neutral background`);
-          // Download the transparent portrait (use OS temp directory)
-          const tempPortrait = path.join(os.tmpdir(), `portrait_${Date.now()}.png`);
-          const response = await axios.get(seedImagePath, { responseType: 'arraybuffer' });
-          fs.writeFileSync(tempPortrait, Buffer.from(response.data));
-          imageUrl = await this.flattenAndUpload(tempPortrait);
+        // Already a public URL - use directly
+        imageUrl = seedImagePath;
+        if (forceUpload) {
+          console.log(`  ↳ Using composited frame from previous segment`);
         } else {
-          // Composited frame from previous segment - use as-is
-          imageUrl = seedImagePath;
-          console.log(`  ↳ Using composited frame from previous segment: ${path.basename(seedImagePath)}`);
+          console.log(`  ↳ Using portrait URL directly (first segment)`);
         }
-      } else if (!forceUpload && process.env.PORTRAIT_URL) {
-        // For first segment, prefer env variable if available (backward compatibility)
-        console.log(`  ↳ First segment: Will flatten transparent portrait onto neutral background`);
-        // Download from env URL (use OS temp directory)
-        const tempPortrait = path.join(os.tmpdir(), `portrait_${Date.now()}.png`);
-        const response = await axios.get(this.convertToDirectUrl(process.env.PORTRAIT_URL), { responseType: 'arraybuffer' });
-        fs.writeFileSync(tempPortrait, Buffer.from(response.data));
-        imageUrl = await this.flattenAndUpload(tempPortrait);
       } else {
-        // Upload local file to GCS to get a public URL (for CLI usage or transition frames)
-        if (!forceUpload) {
-          // First segment - flatten it
-          console.log(`  ↳ First segment: Will flatten transparent portrait onto neutral background`);
-          imageUrl = await this.flattenAndUpload(seedImagePath);
-        } else {
-          // Subsequent segments - composited frames, use as-is
-          imageUrl = await this.uploadImageToTemp(seedImagePath);
-        }
+        // Local file - upload to GCS first
+        console.log(`  ↳ Uploading local image to GCS...`);
+        imageUrl = await this.uploadImageToTemp(seedImagePath);
       }
 
       // Step 2: Create video generation task
@@ -263,51 +241,6 @@ export class KieService {
   }
 
   /**
-   * Flattens transparent portrait onto neutral background and uploads to GCS
-   * Used for first segment to prevent checkerboard transparency issues
-   * CRITICAL: Outputs JPG to guarantee no alpha channel can exist
-   */
-  private async flattenAndUpload(transparentPortraitPath: string): Promise<string> {
-    try {
-      const { execSync } = require('child_process');
-      const timestamp = Date.now();
-      // CRITICAL: Output as JPG - JPG format cannot store transparency
-      const flattenedPath = path.join(path.dirname(transparentPortraitPath), `flattened_${timestamp}.jpg`);
-
-      console.log(`  ↳ Flattening transparent portrait onto neutral background (JPG output)...`);
-
-      // Create a soft blurred gradient background (neutral gray with subtle gradient)
-      // Then composite the transparent portrait on top
-      // CRITICAL: format=rgb forces RGB output, -qscale:v 2 is high quality JPG
-      const flattenCmd = `ffmpeg -f lavfi -i "color=c=#808080:s=1080x1920:d=1" ` +
-        `-i "${transparentPortraitPath}" ` +
-        `-filter_complex "[0:v]boxblur=50:5[bg];[bg][1:v]overlay=(W-w)/2:(H-h)/2:format=rgb" ` +
-        `-frames:v 1 -qscale:v 2 "${flattenedPath}" -y`;
-
-      execSync(flattenCmd, { stdio: 'pipe' });
-      console.log(`  ↳ Portrait flattened successfully as JPG (guaranteed opaque)`);
-
-      // Upload the flattened image
-      const publicUrl = await this.uploadImageToTemp(flattenedPath);
-
-      // Cleanup temp files
-      const os = require('os');
-      if (fs.existsSync(flattenedPath)) {
-        fs.unlinkSync(flattenedPath);
-      }
-      if (fs.existsSync(transparentPortraitPath) && transparentPortraitPath.includes(os.tmpdir())) {
-        fs.unlinkSync(transparentPortraitPath);
-      }
-
-      return publicUrl;
-    } catch (error) {
-      console.error('Portrait flattening failed:', error);
-      console.error('CRITICAL: Cannot proceed with transparent portrait - would cause checkerboard!');
-      throw new Error(`Portrait flattening failed: ${error}. Cannot use transparent portrait as seed.`);
-    }
-  }
-
-  /**
    * Uploads image to Google Cloud Storage and returns public URL
    */
   private async uploadImageToTemp(imagePath: string): Promise<string> {
@@ -330,22 +263,6 @@ export class KieService {
       console.error('Image upload to GCS failed:', error);
       throw new Error(`Failed to upload image to GCS: ${error}`);
     }
-  }
-
-  /**
-   * Converts Google Drive viewer URL to direct download URL
-   */
-  private convertToDirectUrl(url: string): string {
-    // Google Drive: https://drive.google.com/file/d/FILE_ID/view?usp=sharing
-    // Convert to: https://drive.google.com/uc?export=download&id=FILE_ID
-    const driveMatch = url.match(/\/file\/d\/([^\/]+)/);
-    if (driveMatch) {
-      const fileId = driveMatch[1];
-      return `https://drive.google.com/uc?export=download&id=${fileId}`;
-    }
-
-    // Return original URL if not a Google Drive URL
-    return url;
   }
 
   /**

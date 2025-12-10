@@ -451,14 +451,26 @@ export class FFmpegService {
       // Get video duration first
       const duration = await this.getVideoDuration(videoPath);
 
-      // Extract frame from the last 0.1 seconds (just before the end)
-      const timestamp = Math.max(0, duration - 0.1);
+      // Extract frame from 1 second before the end to avoid fade-to-black effects
+      // KIE.AI videos may have transitions/fades at the very end
+      const timestamp = Math.max(0, duration - 1.0);
+
+      console.log(`  ↳ Extracting frame at ${timestamp.toFixed(2)}s (video duration: ${duration.toFixed(2)}s)`);
 
       const command = `ffmpeg -ss ${timestamp} -i "${videoPath}" -vframes 1 -q:v 2 "${outputPath}" -y`;
 
       execSync(command, { stdio: 'pipe' });
 
-      console.log(`  ✓ Extracted last frame: ${path.basename(outputPath)}`);
+      // Verify the extracted frame is not blank/black
+      if (fs.existsSync(outputPath)) {
+        const stats = fs.statSync(outputPath);
+        if (stats.size < 1000) {
+          console.warn(`  ⚠️  Warning: Extracted frame is very small (${stats.size} bytes) - may be blank`);
+        } else {
+          console.log(`  ✓ Extracted last frame: ${path.basename(outputPath)} (${(stats.size / 1024).toFixed(1)}KB)`);
+        }
+      }
+
       return outputPath;
     } catch (error) {
       console.error(`Failed to extract last frame from ${videoPath}:`, error);
@@ -502,24 +514,33 @@ export class FFmpegService {
       // Step 2: Composite portrait directly on extracted frame (NO BLUR for sharp background)
       // Use scale2ref to scale portrait relative to BACKGROUND frame height (not portrait's own height)
       // This prevents cut-off when portrait is larger than the video frame
-      // Scale to 85% of background height for full visibility without cropping
-      // CRITICAL: Output as JPG to completely eliminate any alpha channel
-      // JPG format physically cannot store transparency - KIE.AI gets a fully opaque image
+      // Scale to 100% of background height to match KIE.AI video output
+      // CRITICAL:
+      // 1. Convert portrait to RGBA format FIRST to preserve alpha channel during scaling
+      // 2. Overlay uses alpha blending automatically when foreground has alpha
+      // 3. Output as JPG to eliminate any remaining transparency
       const isJpg = ext.toLowerCase() === '.jpg' || ext.toLowerCase() === '.jpeg';
 
       let compositeCmd: string;
       if (isJpg) {
-        // For JPG output: Use MJPEG codec with high quality (-qscale:v 2)
-        // This guarantees no transparency can exist in the output
+        // For JPG output with proper alpha blending:
+        // 1. [1:v]format=rgba - Ensure portrait has alpha channel preserved
+        // 2. scale2ref - Scale portrait relative to background frame
+        // 3. overlay - Alpha blend portrait onto background (transparent parts show background)
+        // 4. format=rgb - Convert final result to RGB (no alpha) for JPG output
         compositeCmd = `ffmpeg -i "${tempFramePath}" -i "${portraitPath}" ` +
-          `-filter_complex "[1:v][0:v]scale2ref=-1:ih*0.85[portrait][bg];` +
-          `[bg][portrait]overlay=(W-w)/2:(H-h)/2:format=rgb[composited]" ` +
+          `-filter_complex "[1:v]format=rgba[portrait_rgba];` +
+          `[portrait_rgba][0:v]scale2ref=-1:ih[portrait_scaled][bg];` +
+          `[bg][portrait_scaled]overlay=(W-w)/2:(H-h)/2[blended];` +
+          `[blended]format=rgb24[composited]" ` +
           `-map "[composited]" -frames:v 1 -qscale:v 2 "${outputPath}" -y`;
       } else {
         // For PNG output: Force RGB24 pixel format (no alpha channel)
         compositeCmd = `ffmpeg -i "${tempFramePath}" -i "${portraitPath}" ` +
-          `-filter_complex "[1:v][0:v]scale2ref=-1:ih*0.85[portrait][bg];` +
-          `[bg][portrait]overlay=(W-w)/2:(H-h)/2:format=rgb,format=rgb24[composited]" ` +
+          `-filter_complex "[1:v]format=rgba[portrait_rgba];` +
+          `[portrait_rgba][0:v]scale2ref=-1:ih[portrait_scaled][bg];` +
+          `[bg][portrait_scaled]overlay=(W-w)/2:(H-h)/2[blended];` +
+          `[blended]format=rgb24[composited]" ` +
           `-map "[composited]" -frames:v 1 -pix_fmt rgb24 "${outputPath}" -y`;
       }
 

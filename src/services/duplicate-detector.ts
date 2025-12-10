@@ -21,16 +21,21 @@ export class DuplicateDetector {
   /**
    * Checks if content is duplicate before publishing
    * This is CRITICAL for monetization compliance
+   * Accepts string or object for script/storyOutline (handles edge cases from OpenAI)
    */
   async checkForDuplicates(
     title: string,
     description: string,
-    script: string,
-    storyOutline: string
+    script: string | object,
+    storyOutline: string | object
   ): Promise<DuplicateCheckResult> {
     console.log('🔍 Checking for duplicate content...');
 
-    // Generate hashes for comparison
+    // Ensure title and description are strings
+    const safeTitle = typeof title === 'string' ? title : JSON.stringify(title || '');
+    const safeDescription = typeof description === 'string' ? description : JSON.stringify(description || '');
+
+    // Generate hashes for comparison (generateHash handles Object types)
     const scriptHash = this.generateHash(script);
     const storyHash = this.generateHash(storyOutline);
 
@@ -59,8 +64,8 @@ export class DuplicateDetector {
 
     // Check title similarity (semantic) - skip blanks to avoid false positives
     for (const [id, content] of this.contentDatabase) {
-      if (!title.trim() || !content.title.trim()) continue;
-      const titleSimilarity = this.calculateSimilarity(title, content.title);
+      if (!safeTitle.trim() || !content.title.trim()) continue;
+      const titleSimilarity = this.calculateSimilarity(safeTitle, content.title);
 
       if (titleSimilarity > 0.85) {
         return {
@@ -74,9 +79,9 @@ export class DuplicateDetector {
 
     // Check description similarity - skip blanks to avoid false positives
     for (const [id, content] of this.contentDatabase) {
-      if (!description.trim() || !content.description.trim()) continue;
+      if (!safeDescription.trim() || !content.description.trim()) continue;
       const descSimilarity = this.calculateSimilarity(
-        description,
+        safeDescription,
         content.description
       );
 
@@ -100,12 +105,13 @@ export class DuplicateDetector {
 
   /**
    * Registers new content in the database
+   * Accepts string or object for script/storyOutline (handles edge cases from OpenAI)
    */
   async registerContent(
     title: string,
     description: string,
-    script: string,
-    storyOutline: string,
+    script: string | object,
+    storyOutline: string | object,
     platforms: Platform[]
   ): Promise<ContentFingerprint> {
     const id = crypto.randomUUID();
@@ -148,9 +154,22 @@ export class DuplicateDetector {
 
   /**
    * Generates SHA-256 hash of content
+   * Handles cases where content might be an Object instead of string
    */
-  private generateHash(content: string): string {
-    return crypto.createHash('sha256').update(content).digest('hex');
+  private generateHash(content: string | object): string {
+    // Ensure content is always a string for hashing
+    let stringContent: string;
+
+    if (typeof content === 'string') {
+      stringContent = content;
+    } else if (content === null || content === undefined) {
+      stringContent = '';
+    } else {
+      // Convert Object to JSON string for hashing
+      stringContent = JSON.stringify(content);
+    }
+
+    return crypto.createHash('sha256').update(stringContent).digest('hex');
   }
 
   /**
