@@ -19,7 +19,7 @@ export class FFmpegService {
     resolution: number = 1080,
     fps: number = 30,
     codec: string = 'libx264',
-    bitrate: string = '5000k'
+    bitrate: string = '8000k'  // Increased from 5000k for premium quality
   ) {
     this.resolution = resolution;
     this.fps = fps;
@@ -92,26 +92,35 @@ export class FFmpegService {
   }
 
   /**
-   * Applies smooth transitions between video segments
+   * Applies smooth premium transitions between video segments
    */
   private async applyTransitions(
     videoSegments: string[],
     transitions: TransitionConfig[],
     outputPath: string
   ): Promise<string> {
-    console.log(`  Applying transitions to ${videoSegments.length} segments...`);
+    console.log(`  Applying premium transitions to ${videoSegments.length} segments...`);
+
+    // Get durations for all segments to calculate proper offsets
+    const segmentDurations: number[] = [];
+    for (const segment of videoSegments) {
+      const duration = await this.getVideoDuration(segment);
+      segmentDurations.push(duration);
+      console.log(`    Segment ${segmentDurations.length}: ${duration.toFixed(2)}s`);
+    }
 
     // Build FFmpeg filter complex for transitions
     let filterComplex = '';
     let inputs = '';
-    let lastOutput = '[0:v]';
 
     // Add all input files
     videoSegments.forEach((segment) => {
       inputs += `-i "${segment}" `;
     });
 
-    // Create transition filters
+    // Create transition filters with dynamic offsets
+    let cumulativeOffset = 0;
+
     for (let i = 0; i < videoSegments.length - 1; i++) {
       const transition = transitions[i] || {
         type: 'crossfade',
@@ -124,29 +133,67 @@ export class FFmpegService {
       const input2 = `[${i + 1}:v]`;
       const output = i === videoSegments.length - 2 ? '[vout]' : `[v${i + 1}]`;
 
-      // Create transition based on type
+      // Calculate offset: start transition at (segment_duration - transition_duration)
+      // This makes the last N seconds of segment overlap with first N seconds of next segment
+      const offset = cumulativeOffset + segmentDurations[i] - transitionDuration;
+
+      console.log(`    Transition ${i + 1}: offset=${offset.toFixed(2)}s, duration=${transitionDuration}s`);
+
+      // Premium transition types with smoother effects
       switch (transition.type) {
         case 'crossfade':
-          filterComplex += `${input1}${input2}xfade=transition=fade:duration=${transitionDuration}:offset=6${output};`;
+          // Smooth fade transition
+          filterComplex += `${input1}${input2}xfade=transition=fade:duration=${transitionDuration}:offset=${offset}${output};`;
           break;
         case 'morph':
-          filterComplex += `${input1}${input2}xfade=transition=wipeleft:duration=${transitionDuration}:offset=6${output};`;
+          // Smooth wipe with easing
+          filterComplex += `${input1}${input2}xfade=transition=smoothleft:duration=${transitionDuration}:offset=${offset}${output};`;
           break;
         case 'zoom':
-          filterComplex += `${input1}${input2}xfade=transition=zoomin:duration=${transitionDuration}:offset=6${output};`;
+          // Cinematic circle crop zoom
+          filterComplex += `${input1}${input2}xfade=transition=circlecrop:duration=${transitionDuration}:offset=${offset}${output};`;
           break;
         case 'pan':
-          filterComplex += `${input1}${input2}xfade=transition=slideright:duration=${transitionDuration}:offset=6${output};`;
+          // Smooth slide right
+          filterComplex += `${input1}${input2}xfade=transition=smoothright:duration=${transitionDuration}:offset=${offset}${output};`;
           break;
         case 'slide':
-          filterComplex += `${input1}${input2}xfade=transition=slideleft:duration=${transitionDuration}:offset=6${output};`;
+          // Smooth slide left
+          filterComplex += `${input1}${input2}xfade=transition=smoothleft:duration=${transitionDuration}:offset=${offset}${output};`;
           break;
+        default:
+          // Default to smooth fade
+          filterComplex += `${input1}${input2}xfade=transition=fade:duration=${transitionDuration}:offset=${offset}${output};`;
       }
+
+      // Update cumulative offset: add current segment duration minus transition overlap
+      cumulativeOffset += segmentDurations[i] - transitionDuration;
     }
 
-    // Execute FFmpeg command with audio preservation
-    // Map video output and mix audio from all segments
-    const command = `ffmpeg ${inputs} -filter_complex "${filterComplex};amix=inputs=${videoSegments.length}:duration=longest[aout]" -map "[vout]" -map "[aout]" -c:v ${this.codec} -b:v ${this.bitrate} -r ${this.fps} -c:a aac -b:a 192k "${outputPath}" -y`;
+    console.log(`  ✓ Configured ${videoSegments.length - 1} smooth transitions`);
+
+    // Build audio crossfade filters for smooth audio transitions
+    let audioFilter = '';
+    if (videoSegments.length > 1) {
+      // Create crossfade between audio tracks
+      let audioChain = '[0:a]';
+      for (let i = 1; i < videoSegments.length; i++) {
+        const prevAudio = audioChain;
+        const nextAudio = `[${i}:a]`;
+        const output = i === videoSegments.length - 1 ? '[aout]' : `[a${i}]`;
+
+        // Crossfade audio for 0.5 seconds at each transition
+        audioFilter += `${prevAudio}${nextAudio}acrossfade=d=0.5${output};`;
+        audioChain = output;
+      }
+    } else {
+      audioFilter = '[0:a]anull[aout];';
+    }
+
+    // Execute FFmpeg command with premium encoding settings
+    const command = `ffmpeg ${inputs} -filter_complex "${filterComplex}${audioFilter}" -map "[vout]" -map "[aout]" -c:v ${this.codec} -preset slow -crf 18 -b:v ${this.bitrate} -maxrate ${this.bitrate} -bufsize ${parseInt(this.bitrate) * 2}k -r ${this.fps} -pix_fmt yuv420p -c:a aac -b:a 256k -ar 48000 "${outputPath}" -y`;
+
+    console.log(`  🎬 Encoding with premium settings: CRF 18, bitrate ${this.bitrate}, 256k audio`);
 
     try {
       execSync(command, { stdio: 'pipe' });
