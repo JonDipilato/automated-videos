@@ -396,22 +396,41 @@ export class GrokService {
   /**
    * Enhances background prompt with professional cinematography details
    */
-  private enhanceBackgroundPrompt(prompt: string): string {
-    return `${prompt}.
+  private enhanceBackgroundPrompt(prompt: string, niche?: string): string {
+    let enhancement = `${prompt}.
 Professional cinematography, high-quality production, cinematic lighting,
 depth of field, photorealistic, 8K resolution, color graded,
-atmospheric perspective, balanced composition, studio quality.`;
+atmospheric perspective, balanced composition, studio quality`;
+
+    // Add niche-specific visual enhancements
+    if (niche === 'epic-battles') {
+      enhancement += `, dramatic action scene, explosive energy effects, glowing auras and lightning,
+intense battle atmosphere, dynamic motion blur, vibrant power surges, cinematic action photography,
+fast-paced energy, electric atmosphere, powerful visual impact`;
+    }
+
+    return enhancement + '.';
   }
 
   /**
    * Enhances video prompt with motion and quality details
    */
-  private enhanceVideoPrompt(prompt: string): string {
-    return `${prompt}.
+  private enhanceVideoPrompt(prompt: string, niche?: string): string {
+    let enhancement = `${prompt}.
 Smooth natural motion, professional cinematography, stable camera work,
 cinematic lighting, high quality production, photorealistic rendering,
 color graded, 60fps fluid motion, consistent lighting throughout,
-professional video quality, social media optimized.`;
+professional video quality, social media optimized`;
+
+    // Add niche-specific motion enhancements
+    if (niche === 'epic-battles') {
+      enhancement += `, explosive action sequences, high-speed combat movements,
+glowing energy trails, pulsating power auras, dramatic camera shake effects,
+lightning-fast strikes, explosive particle effects, intense battle choreography,
+dynamic speed lines, electrifying atmosphere, epic showdown energy`;
+    }
+
+    return enhancement + '.';
   }
 
   /**

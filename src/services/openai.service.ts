@@ -53,7 +53,8 @@ export class OpenAIService {
   async generateScript(
     topic: string,
     targetDuration: number,
-    segmentDuration: number = 7
+    segmentDuration: number = 7,
+    niche?: string
   ): Promise<ScriptGeneration> {
     // Calculate target word count for TTS
     // Calibrated for 6-7s video segments: ~95 WPM target, 110 WPM max
@@ -64,11 +65,32 @@ export class OpenAIService {
     console.log(`  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
     console.log(`  📊 SCRIPT GENERATION DEBUG:`);
     console.log(`     Topic: "${topic}"`);
+    console.log(`     Niche: ${niche || 'default'}`);
     console.log(`     Target duration: ${targetDuration}s`);
     console.log(`     Target words: ${targetWordCount} (at 95 WPM)`);
     console.log(`     Max words: ${maxWordCount} (at 110 WPM)`);
     console.log(`     Absolute max: ${Math.floor((targetDuration / 60) * 120)} words (120 WPM hard limit)`);
     console.log(`  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+
+    // Niche-specific content guidance
+    let nicheGuidance = '';
+    if (niche === 'epic-battles') {
+      nicheGuidance = `
+EPIC BATTLES NICHE:
+- Describe intense, high-energy action sequences
+- Emphasize explosive energy attacks, glowing auras, and lightning-fast movements
+- Use dynamic language: "clash", "surge", "explosive", "devastating"
+- Build tension with power escalation and dramatic showdowns
+- Focus on visual spectacle: energy blasts, shockwaves, speed trails
+- Keep the pace FAST and INTENSE throughout`;
+    } else if (niche === 'custom') {
+      nicheGuidance = `
+CUSTOM NICHE:
+- Analyze the topic and determine the most effective tone and style
+- Adapt your approach to maximize engagement for this specific content
+- Be creative and flexible - find the unique angle that makes this topic compelling
+- Focus on what will resonate most with the target audience for this topic`;
+    }
 
     const systemPrompt = `You are a senior YouTube Shorts script editor who writes tight, high-value narratives.
 You specialize in creating powerful, inspiring content that resonates with modern audiences.
@@ -82,7 +104,7 @@ CONTENT APPROACH:
 - Match the tone and theme to the specific topic provided
 - Provide actionable, valuable insights relevant to the topic
 - Use modern, relatable language and examples
-- Focus on transformation and empowerment
+- Focus on transformation and empowerment${nicheGuidance}
 
 CRITICAL CONSTRAINT - WORD COUNT:
 - Target: ${targetWordCount} words (STRICT LIMIT)

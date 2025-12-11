@@ -110,7 +110,9 @@ function initializeDatabase() {
     ['cooking', 'Cooking & Food', 'Recipes, cooking tips, food reviews', 1, 30, 'friendly', '["tiktok","instagram"]', '["30-Second Breakfast Hack","Restaurant-Quality Pasta"]', '🍳'],
     ['real-estate', 'Real Estate', 'Property investing, market analysis, home buying', 1, 90, 'professional', '["youtube","linkedin"]', '["Buy Your First Investment Property"]', '🏡'],
     ['gaming', 'Gaming & Entertainment', 'Gaming tips, reviews, entertainment news', 1, 45, 'exciting', '["youtube","tiktok"]', '["5 Tips to Rank Up Fast","Why This Game Is Breaking Records"]', '🎮'],
-    ['faith', 'Spirituality & Faith', 'Biblical wisdom, spiritual growth, faith-based', 1, 90, 'inspirational', '["youtube","facebook"]', '["What the Bible Says About Fear","3 Prayers That Changed My Life"]', '✨']
+    ['faith', 'Spirituality & Faith', 'Biblical wisdom, spiritual growth, faith-based', 1, 90, 'inspirational', '["youtube","facebook"]', '["What the Bible Says About Fear","3 Prayers That Changed My Life"]', '✨'],
+    ['epic-battles', 'Epic Battles', 'High-energy action sequences with glowing effects, intense combat, explosive energy attacks', 1, 60, 'intense', '["youtube","tiktok","instagram"]', '["Ultimate Power Showdown","Energy Blast Clash","Speed vs Strength Battle"]', '⚡'],
+    ['custom', 'Custom Niche', 'Create your own unique content - AI will optimize everything for you', 1, 60, 'adaptive', '["youtube","tiktok","instagram","linkedin"]', '["My Unique Topic","Whatever You Imagine"]', '✨']
   ];
 
   for (const niche of niches) {
