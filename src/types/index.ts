@@ -1,6 +1,7 @@
 export interface VideoGenerationConfig {
   seedPortrait: string;
   topic: string;
+  niche?: string;  // Optional niche for specialized content (e.g., 'epic-battles', 'custom')
   voiceCloneId: string;
   videoSegmentDuration: number;
   transitionDuration: number;
@@ -61,7 +62,7 @@ export interface GrokPrompt {
   segmentIndex: number;
   videoPrompt: string;
   backgroundPrompt: string;
-  transitionType: 'crossfade' | 'morph' | 'zoom' | 'pan';
+  transitionType: 'crossfade' | 'morph' | 'zoom' | 'pan' | 'fade';
   duration: number;
   continuityNote?: string; // Description of how this segment connects to the next
 }
@@ -167,7 +168,7 @@ export interface ElevenLabsVoiceSettings {
 }
 
 export interface TransitionConfig {
-  type: 'crossfade' | 'morph' | 'zoom' | 'pan' | 'slide';
+  type: 'crossfade' | 'morph' | 'zoom' | 'pan' | 'slide' | 'fade';
   duration: number;
   easing: 'linear' | 'easeIn' | 'easeOut' | 'easeInOut';
 }
@@ -224,11 +225,60 @@ export interface ServiceConfig {
 
 export interface WorkflowState {
   jobId: string;
-  status: 'initializing' | 'generating_script' | 'generating_audio' | 'generating_visuals' | 'assembling_video' | 'generating_metadata' | 'publishing' | 'completed' | 'failed';
+  status: 'initializing' | 'generating_script' | 'generating_audio' | 'generating_visuals' | 'assembling_video' | 'generating_metadata' | 'publishing' | 'completed' | 'failed' | 'validating' | 'generating_video' | 'assembling' | 'replacing_voice' | 'adding_captions' | 'processing_script' | 'generating_prompts';
   progress: number;
   currentStep: string;
   error?: string;
   result?: VideoGenerationResult;
   startTime: Date;
   endTime?: Date;
+}
+
+// ============================================
+// LIP SYNC WORKFLOW TYPES
+// For Grok-native lip sync video generation
+// ============================================
+
+/**
+ * Scene definition for lip-sync video generation
+ * Uses Grok's native speech capabilities
+ */
+export interface LipSyncScene {
+  id: string;
+  dialogue: string;     // What the person says (becomes "Line: ..." in prompt)
+  visual: string;       // Background description
+  title?: string;       // Optional scene title
+  timestamp?: string;   // Optional timestamp reference
+}
+
+/**
+ * Background mood presets for spectacular visuals
+ */
+export type BackgroundMood = 'dramatic' | 'futuristic' | 'nature' | 'urban' | 'corporate' | 'custom';
+
+/**
+ * Video generation mode selection
+ */
+export type GenerationMode = 'grok-lipsync' | 'elevenlabs-tts';
+
+/**
+ * Options for lip-sync workflow
+ */
+export interface LipSyncWorkflowOptions {
+  replaceVoice: boolean;          // Extract Grok audio and replace with ElevenLabs
+  voiceId?: string;               // ElevenLabs voice ID if replacing
+  backgroundMood: BackgroundMood; // Mood for background enhancement
+  addCaptions?: boolean;          // Add captions to final video
+}
+
+/**
+ * Response from lip-sync video generation
+ */
+export interface LipSyncVideoResponse {
+  videoUrl: string;
+  dialogue: string;
+  background: string;
+  segmentIndex: number;
+  status: 'completed' | 'failed';
+  hasAudio: boolean;  // True for Grok lip-sync (has native audio)
 }

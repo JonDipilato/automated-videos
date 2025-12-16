@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
-import { videoQueries, jobQueries, nicheQueries, portraitQueries } from '@/lib/db';
+import { videoQueries, jobQueries, portraitQueries } from '@/lib/db';
 import path from 'path';
 
 // Import existing services from CLI
@@ -13,41 +13,52 @@ import { DuplicateDetector } from '../../../../src/services/duplicate-detector';
 import { SocialMediaService } from '../../../../src/services/social-media.service';
 import { SchedulerService } from '../../../../src/services/scheduler.service';
 import { CaptionsService } from '../../../../src/services/captions.service';
-import { VideoGenerationWorkflow } from '../../../../src/workflows/video-generation.workflow';
+import { CustomScriptWorkflow } from '../../../../src/workflows/custom-script.workflow';
 import { Platform } from '../../../../src/types';
+
+// Scene type matching frontend
+interface CustomScene {
+  id: string;
+  timestamp: string;
+  title: string;
+  visual: string;
+  voiceover: string;
+}
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { niche, topic, portraitPath, duration, platforms, voiceId } = body;
+    const { title, portraitPath, platforms, voiceId, scenes } = body;
 
     // Validate database queries are available
-    if (!videoQueries?.create || !jobQueries?.create || !nicheQueries?.getById) {
+    if (!videoQueries?.create || !jobQueries?.create) {
       console.error('Database not properly initialized');
       return NextResponse.json({ error: 'Database not initialized' }, { status: 500 });
     }
 
     // Validate input
-    if (!niche || !topic) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    if (!title || !scenes || scenes.length === 0) {
+      return NextResponse.json({ error: 'Missing required fields (title or scenes)' }, { status: 400 });
     }
 
-    // Get niche details
-    const nicheData = nicheQueries.getById.get(niche) as any;
-    if (!nicheData) {
-      return NextResponse.json({ error: 'Invalid niche' }, { status: 400 });
+    // Validate each scene has voiceover
+    const invalidScenes = scenes.filter((s: CustomScene) => !s.voiceover || s.voiceover.trim() === '');
+    if (invalidScenes.length > 0) {
+      return NextResponse.json({
+        error: `Scene(s) missing voiceover: ${invalidScenes.map((s: CustomScene) => s.title || 'Untitled').join(', ')}`
+      }, { status: 400 });
     }
 
     // Generate IDs
     const videoId = uuidv4();
     const jobId = uuidv4();
 
-    // Create video record
+    // Create video record (use 'custom' as niche)
     videoQueries.create.run(
       videoId,
       jobId,
-      niche,
-      topic,
+      'custom',
+      title,
       portraitPath || null,
       JSON.stringify(platforms || ['youtube', 'tiktok']),
       'pending'
@@ -63,7 +74,6 @@ export async function POST(request: NextRequest) {
       if (defaultPortrait) {
         finalPortraitPath = defaultPortrait.filepath;
       } else {
-        // Fallback to environment variable or error
         finalPortraitPath = process.env.DEFAULT_PORTRAIT_URL || '';
         if (!finalPortraitPath) {
           throw new Error('No portrait provided and no default portrait available. Please upload a portrait first.');
@@ -72,36 +82,34 @@ export async function POST(request: NextRequest) {
     }
 
     // Start generation in background (non-blocking)
-    startVideoGeneration(jobId, videoId, {
-      niche: nicheData,
-      topic,
-      portraitPath: finalPortraitPath,  // Public GCS URL
-      duration: duration || nicheData.default_duration,
-      platforms: platforms || JSON.parse(nicheData.platforms),
-      voiceId: voiceId || null  // Use selected voice or default from config
+    startCustomVideoGeneration(jobId, videoId, {
+      title,
+      portraitPath: finalPortraitPath,
+      platforms: platforms || ['youtube', 'tiktok'],
+      voiceId: voiceId || null,
+      scenes: scenes as CustomScene[]
     }).catch((error) => {
-      console.error('Background generation error:', error);
+      console.error('Background custom generation error:', error);
       jobQueries.fail.run(error.message, jobId);
       videoQueries.updateStatus.run('failed', videoId);
     });
 
     return NextResponse.json({ jobId, videoId, status: 'started' });
   } catch (error) {
-    console.error('Generate API error:', error);
+    console.error('Generate Custom API error:', error);
     return NextResponse.json({ error: 'Generation failed' }, { status: 500 });
   }
 }
 
-async function startVideoGeneration(
+async function startCustomVideoGeneration(
   jobId: string,
   videoId: string,
   params: {
-    niche: any;
-    topic: string;
+    title: string;
     portraitPath: string;
-    duration: number;
     platforms: Platform[];
     voiceId: string | null;
+    scenes: CustomScene[];
   }
 ) {
   try {
@@ -111,7 +119,7 @@ async function startVideoGeneration(
     // Load configuration
     const config = ConfigLoader.loadServiceConfig();
 
-    // Initialize services (same as CLI)
+    // Initialize services
     const openai = new OpenAIService(config.openai.apiKey, config.openai.model);
     const grok = new GrokService(
       config.grok.apiKey,
@@ -120,7 +128,7 @@ async function startVideoGeneration(
       config.grok.imageModel
     );
 
-    // Use selected voice ID if provided, otherwise fall back to config default (your voice clone)
+    // Use selected voice ID if provided, otherwise fall back to config default
     const selectedVoiceId = params.voiceId || config.elevenlabs.voiceId;
     console.log(`🎤 Using voice: ${selectedVoiceId}${params.voiceId ? ' (selected)' : ' (default from config)'}`);
 
@@ -135,10 +143,9 @@ async function startVideoGeneration(
     const scheduler = new SchedulerService(process.env.TIMEZONE || 'UTC');
     const captions = new CaptionsService(config.openai.apiKey);
 
-    // Create workflow with correct output directory (relative to project root)
-    // Use path.resolve to get absolute path pointing to project root's output folder
+    // Create workflow with correct output directory
     const workDir = path.resolve(process.cwd(), '..', 'output');
-    const workflow = new VideoGenerationWorkflow(
+    const workflow = new CustomScriptWorkflow(
       openai,
       grok,
       elevenlabs,
@@ -150,23 +157,17 @@ async function startVideoGeneration(
       workDir
     );
 
-    // Create video config with niche for specialized visual styles
-    const videoConfig = ConfigLoader.createDefaultConfig(
-      params.portraitPath,
-      params.topic,
-      params.platforms,
-      params.duration,
-      params.niche.id  // Pass niche ID (e.g., 'epic-battles') for visual style
-    );
-
     // Update progress
-    jobQueries.updateProgress.run('generating', 'Starting generation...', 5, jobId);
+    jobQueries.updateProgress.run('generating', 'Starting custom script generation...', 5, jobId);
     videoQueries.updateStatus.run('generating', videoId);
 
-    // Run generation with real-time progress updates
-    const result = await workflow.generateVideo(
-      videoConfig,
-      // Progress callback - updates database in real-time
+    // Run generation with progress updates
+    const result = await workflow.generateFromCustomScript(
+      params.title,
+      params.scenes,
+      params.portraitPath,
+      params.platforms,
+      // Progress callback
       (status: string, step: string, progress: number) => {
         try {
           jobQueries.updateProgress.run(status, step, progress, jobId);
@@ -181,7 +182,7 @@ async function startVideoGeneration(
       // Update job as completed
       jobQueries.complete.run(jobId);
 
-      // Convert absolute videoPath to relative path (relative to project root)
+      // Convert absolute videoPath to relative path
       const projectRoot = path.resolve(process.cwd(), '..');
       const relativeVideoPath = result.videoPath
         ? path.relative(projectRoot, result.videoPath).replace(/\\/g, '/')
@@ -199,7 +200,7 @@ async function startVideoGeneration(
       throw new Error(result.error || 'Generation failed');
     }
   } catch (error: any) {
-    console.error('Video generation error:', error);
+    console.error('Custom video generation error:', error);
     jobQueries.fail.run(error.message, jobId);
     videoQueries.updateStatus.run('failed', videoId);
   }

@@ -90,15 +90,19 @@ async function runGeneration(args: string[], logger: Logger) {
     const topic = parseArg('--topic');
     const platformsArg = parseArg('--platforms');
     const maxLengthArg = parseArg('--max-length');
+    const niche = parseArg('--niche');
 
     if (!seedPortrait || !topic) {
       console.error('❌ Missing required arguments');
       console.error('');
       console.error('Usage:');
-      console.error('  npm start generate -- --portrait <path> --topic <topic> [--platforms <list>] [--max-length <seconds>]');
+      console.error('  npm start generate -- --portrait <path> --topic <topic> [--platforms <list>] [--max-length <seconds>] [--niche <niche>]');
       console.error('');
       console.error('Example:');
       console.error('  npm start generate -- --portrait "./assets/portraits/me.jpg" --topic "5 AI Tips" --platforms youtube,tiktok,instagram --max-length 14');
+      console.error('  npm start generate -- --portrait "./assets/portraits/goku.png" --topic "Goku vs Vegeta" --niche epic-battles --max-length 60');
+      console.error('');
+      console.error('Available niches: ai-tech, business, fitness, personal-dev, education, content, cooking, real-estate, gaming, faith, epic-battles, custom');
       process.exit(1);
     }
 
@@ -113,7 +117,8 @@ async function runGeneration(args: string[], logger: Logger) {
       seedPortrait,
       topic,
       platforms,
-      maxVideoLength  // Pass CLI argument directly
+      maxVideoLength,  // Pass CLI argument directly
+      niche            // Pass niche for specialized visual styles
     );
 
     // Initialize services

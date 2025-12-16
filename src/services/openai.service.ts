@@ -16,6 +16,36 @@ export class OpenAIService {
   }
 
   /**
+   * Estimates audio duration from text word count
+   * ElevenLabs averages ~2.4 words/second at normal settings
+   */
+  estimateAudioDuration(text: string): number {
+    const words = text.trim().split(/\s+/).filter(w => w.length > 0);
+    const wordCount = words.length;
+    // ElevenLabs at normal settings: ~2.4 words per second
+    // Using 2.3 to be slightly conservative (better to overestimate duration)
+    return wordCount / 2.3;
+  }
+
+  /**
+   * Truncates script to fit within target duration
+   * Uses sentence-boundary truncation for clean cutoffs
+   */
+  truncateToFitDuration(text: string, targetDuration: number, toleranceSeconds: number = 5): string {
+    const maxDuration = targetDuration + toleranceSeconds;
+    // Calculate max words: duration * 2.3 words/second
+    const maxWords = Math.floor(maxDuration * 2.3);
+
+    const currentWords = text.trim().split(/\s+/).length;
+    if (currentWords <= maxWords) {
+      return text;
+    }
+
+    console.log(`  ↳ 📏 Truncating script: ${currentWords} words → ${maxWords} words (target: ${targetDuration}s + ${toleranceSeconds}s tolerance)`);
+    return this.truncateAtSentence(text, maxWords);
+  }
+
+  /**
    * Intelligently truncates text at sentence boundaries to prevent mid-sentence cutoffs
    */
   private truncateAtSentence(text: string, maxWords: number): string {
@@ -248,18 +278,34 @@ Format as JSON with fields: script, storyOutline, keyPoints (array), tone, estim
       console.log(`  ↳ 📹 Will generate additional video segments to match full audio duration`);
     }
 
-    // ✅ USE FULL SCRIPT with reasonable maximum (3x target duration)
-    // This prevents excessively long scripts while allowing natural completion
-    const reasonableMaxWords = Math.floor((targetDuration * 3 / 60) * 110); // 3x target, 110 WPM
+    // ✅ PRE-TTS VALIDATION: Estimate duration BEFORE spending ElevenLabs credits
+    const estimatedDuration = this.estimateAudioDuration(scriptText);
+    const maxAllowedDuration = targetDuration + 5; // 5 second tolerance (reduced from 10s)
 
-    if (actualWordCount > reasonableMaxWords) {
-      console.warn(`  ↳ ⚠️  Script is excessively long (${actualWordCount} words, max: ${reasonableMaxWords})`);
-      console.warn(`  ↳ Truncating at sentence boundary to prevent unreasonably long video`);
+    console.log(`  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    console.log(`  📊 PRE-TTS DURATION ESTIMATE:`);
+    console.log(`     Estimated audio: ${estimatedDuration.toFixed(1)}s`);
+    console.log(`     Target duration: ${targetDuration}s`);
+    console.log(`     Max allowed: ${maxAllowedDuration}s (5s tolerance)`);
+    console.log(`  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+
+    // Reasonable max now 1.15x target (was 3x - way too loose!)
+    const reasonableMaxWords = Math.floor(maxAllowedDuration * 2.3); // words at 2.3 words/sec
+
+    if (estimatedDuration > maxAllowedDuration) {
+      console.warn(`  ↳ ⚠️  Estimated duration (${estimatedDuration.toFixed(1)}s) exceeds limit (${maxAllowedDuration}s)`);
+      console.warn(`  ↳ 📏 Truncating script to fit duration BEFORE TTS to save credits`);
+      finalScript = this.truncateToFitDuration(scriptText, targetDuration, 5);
+      const newEstimate = this.estimateAudioDuration(finalScript);
+      console.log(`  ↳ ✅ Truncated: new estimate ${newEstimate.toFixed(1)}s`);
+    } else if (actualWordCount > reasonableMaxWords) {
+      console.warn(`  ↳ ⚠️  Script is long (${actualWordCount} words, max: ${reasonableMaxWords})`);
+      console.warn(`  ↳ Truncating at sentence boundary`);
       finalScript = this.truncateAtSentence(scriptText, reasonableMaxWords);
     } else {
       // Use the full script - no truncation
       finalScript = scriptText;
-      console.log(`  ↳ ✅ Using full ${actualWordCount}-word script`)
+      console.log(`  ↳ ✅ Using full ${actualWordCount}-word script (est. ${estimatedDuration.toFixed(1)}s)`)
     }
 
     return {
@@ -279,20 +325,38 @@ Format as JSON with fields: script, storyOutline, keyPoints (array), tone, estim
     scriptGeneration: ScriptGeneration,
     segmentCount: number,
     seedPortraitDescription: string,
-    segmentDuration: number = 7
+    segmentDuration: number = 7,
+    niche?: string
   ): Promise<GrokPrompt[]> {
     // ⚠️ Special case: For single-segment videos, create a simple prompt
     if (segmentCount <= 1) {
       return [{
         segmentIndex: 0,
-        videoPrompt: `${seedPortraitDescription} facing camera with natural, engaged expressions. Silent portrait with no mouth movement. ${scriptGeneration.keyPoints.join(', ')}. Professional lighting, cinematic composition.`,
+        videoPrompt: `Keep original motion and lip movement. Leave speaker unchanged. Modify background only. Background: Professional studio with soft lighting, suitable for ${scriptGeneration.tone} content. ${scriptGeneration.keyPoints.join(', ')}. Cinematic 4K quality.`,
         backgroundPrompt: `Professional studio setup with soft lighting and depth, suitable for ${scriptGeneration.tone} content`,
         transitionType: 'crossfade' as const,
         duration: segmentDuration,
         continuityNote: 'Single-segment video - maintains consistent framing throughout'
       }];
     }
-    const systemPrompt = `You are an elite cinematographer and visual storytelling expert for Grok's video generation AI.
+
+    // Niche-specific visual style requirements
+    let nicheVisualStyle = '';
+    if (niche === 'epic-battles') {
+      nicheVisualStyle = `
+
+⚔️ EPIC BATTLES VISUAL STYLE (CRITICAL - APPLY TO ALL PROMPTS):
+- BATTLE ENVIRONMENTS: Ancient battlefields, volcanic arenas, shattered floating islands, storm-ravaged wastelands, cosmic void battlegrounds, ruined temples with mystical energy
+- COMBAT LIGHTING: Explosive flashes, crackling lightning, fiery glows, pulsing power auras, clashing energy beams, dramatic backlighting from explosions
+- POWER EFFECTS: Glowing auras surrounding fighters, energy charging sequences, shockwave ripples, speed lines, afterimage trails, elemental manifestations (fire, lightning, ice, dark energy)
+- DYNAMIC COMBAT POSES: Mid-strike freeze frames, power-up stances, defensive blocks with energy shields, aerial combat poses, dramatic landing impacts
+- CAMERA WORK FOR ACTION: Whip pans following attacks, impact zoom on strikes, orbiting during power-ups, ground-level shots looking up at towering figures, slow-motion during climactic moments
+- COLOR PALETTE: Intense oranges/reds for fire attacks, electric blues for energy, deep purples for dark power, golden yellow for ultimate forms, contrasting warm vs cool for opposing forces
+- VISUAL INTENSITY: Screen-filling energy blasts, ground-shattering impacts, atmospheric debris and particles, dramatic lens flares from power sources, dust and smoke from destruction
+- EMOTIONAL ENERGY: Raw power, unstoppable force, legendary warrior spirit, climactic showdown tension, overwhelming intensity`;
+    }
+
+    let systemPrompt = `You are an elite cinematographer and visual storytelling expert for Grok's video generation AI.
 Create VISUALLY STUNNING, FUTURISTIC, and CINEMATIC prompts that produce BREATHTAKING, EPIC results with PERFECT CONTINUITY.
 Focus on FUTURISTIC TECH, AI AESTHETICS, NEON COLORS, and EXCITING scene transitions that captivate viewers.
 CRITICAL: Every scene must flow naturally with NO teleporting or logic breaks.
@@ -304,15 +368,14 @@ CRITICAL: Every scene must flow naturally with NO teleporting or logic breaks.
 - FUTURISTIC ENVIRONMENTS: High-tech command centers, holographic displays, neon-lit cityscapes, AI server rooms with glowing racks, floating platforms, glass towers with LED patterns
 - VISUAL EFFECTS: Glowing particles, data streams, holographic projections, electric arcs, matrix-style code rain, aurora effects
 - CINEMATIC STYLE: Cyberpunk color grading (teal/magenta, purple/orange), high contrast neon vs darkness, lens flares from tech lights
-- EMOTIONAL IMPACT: Powerful poses amidst futuristic tech, confident expressions with holographic reflections, commanding presence in high-tech spaces
+- EMOTIONAL IMPACT: Powerful poses amidst futuristic tech, confident expressions with holographic reflections, commanding presence in high-tech spaces${nicheVisualStyle}
 
-🚫 ABSOLUTE REQUIREMENT - NO SPEECH:
-The subject must NEVER speak, talk, or move their lips. This is a SILENT portrait video.
-- NO mouth movement or lip motion of any kind
-- NO dialogue, speaking, talking, or verbal communication
-- Focus ONLY on facial expressions, head movements, and body language WITHOUT speech
-- Examples of FORBIDDEN actions: speaking, talking, saying, mouthing words, lip sync, dialogue
-- Examples of ALLOWED actions: smiling, nodding, thinking expressions, looking around, hand gestures`;
+🎤 LIP SYNC VIDEO FORMAT (CRITICAL):
+All prompts MUST use this exact format to preserve lip sync and speaker motion:
+- Start with: "Keep original motion and lip movement. Leave speaker unchanged. Modify background only."
+- Then describe ONLY the background/environment changes
+- The speaker's face, expressions, and lip movements are automatically synced with audio
+- Focus on BACKGROUND transformations while keeping the speaker intact`;
 
     // Use original full script for prompt generation (not truncated version)
     const scriptForPrompts = scriptGeneration.originalScript || scriptGeneration.script;
@@ -320,6 +383,34 @@ The subject must NEVER speak, talk, or move their lips. This is a SILENT portrai
     console.log(`   Script length: ${scriptForPrompts.split(/\s+/).length} words`);
     console.log(`   Using: ${scriptGeneration.originalScript ? 'originalScript (full)' : 'script (truncated)'}`);
     console.log(`   Segments: ${segmentCount}`);
+    console.log(`   Niche: ${niche || 'default'}`);
+
+    // Niche-specific user prompt additions
+    let nicheUserPromptAddition = '';
+    if (niche === 'epic-battles') {
+      nicheUserPromptAddition = `
+
+⚔️ EPIC BATTLES SPECIFIC REQUIREMENTS:
+- Every scene must feature INTENSE ACTION and POWER
+- Include glowing energy auras, explosive effects, and dramatic combat poses
+- Use battle-appropriate environments: arenas, battlefields, cosmic voids, volcanic landscapes
+- Camera should emphasize IMPACT: ground-level shots, dramatic angles, speed-focused movements
+- Color palette: fiery oranges, electric blues, deep purples, golden power-ups
+- Each segment should escalate in intensity toward a climactic moment
+
+EPIC BATTLES CONTINUITY PATTERN:
+Segment 1: Warrior standing in destroyed battlefield, power aura flickering to life, camera slowly rising
+Segment 2: Energy gathering around warrior, debris floating upward, lightning crackling in background
+Segment 3: Explosive power-up sequence, ground shattering, camera orbiting rapidly around glowing figure
+Segment 4: Mid-combat pose, energy blast firing, shockwave rippling outward, slow-motion debris
+Segment 5: Aerial combat moment, afterimage trails, clashing energy beams lighting up the scene
+Segment 6: Landing impact creating crater, dust explosion, camera at ground level looking up
+Segment 7: Victory pose with full power aura, defeated enemies in background, epic backlighting
+Segment 8: Close-up of warrior's face, determined expression, power fading to calm, camera slowly pulling back
+
+EXAMPLE EPIC BATTLES VIDEO PROMPT:
+"Keep original motion and lip movement. Leave speaker unchanged. Modify background only. Background: EXPLOSIVE volcanic battlefield with crackling golden energy auras, ground shattering into floating debris. Lightning strikes illuminate the arena while afterimage trails show incredible speed. Fiery oranges and electric blues clash in massive explosions. Slow-motion particles and embers swirl through the air. Camera dramatically reveals the scale of destruction with epic backlighting from volcanic eruptions. Cinematic 4K quality with intense battle atmosphere."`;
+    }
 
     const userPrompt = `Based on this script and story, create ${segmentCount} unique visual prompts for Grok Imagine with PERFECT CONTINUITY.
 
@@ -347,27 +438,28 @@ Segment 8: Close-up of speaker's face as they sit down, concluding thought
 
 KEY: Each scene MUST connect to the previous one. No sudden location jumps without showing the transition.
 
-🚫 MANDATORY: SILENT PORTRAIT - NO SPEECH OR LIP MOVEMENT
-Every video prompt MUST specify that the subject does NOT speak, talk, or move their lips.
-- Write "silent portrait" or "no mouth movement" in EVERY videoPrompt
-- Never use words like: speaking, talking, saying, dialogue, words
-- Subject can smile, nod, think, look around - but NEVER open mouth to speak
+🎤 MANDATORY: LIP SYNC VIDEO FORMAT
+Every video prompt MUST use this exact format to enable automatic lip sync:
+- FIRST LINE MUST BE: "Keep original motion and lip movement. Leave speaker unchanged. Modify background only."
+- Then describe ONLY the background/environment - the speaker is automatically preserved with lip sync
+- Focus on BACKGROUND changes: lighting, environment, effects, atmosphere
+- The AI will automatically sync the speaker's lips to the audio
 
 For EACH segment, provide:
 1. videoPrompt: EXPLOSIVE, DYNAMIC, FUTURISTIC cinematic prompt for ${segmentDuration} seconds of THRILLING footage
-   - MINIMUM 4-5 SENTENCES describing FAST-PACED, EXCITING scene in VIVID, ENERGETIC detail
-   - FIRST LINE MUST STATE: "Silent portrait with no mouth movement or speech"
-   - MANDATORY MOTION: Every scene MUST have constant movement - camera motion, subject motion, environmental motion
+   - FIRST LINE MUST BE: "Keep original motion and lip movement. Leave speaker unchanged. Modify background only."
+   - Then describe the BACKGROUND in 3-4 sentences: environment, lighting, effects, atmosphere
+   - MANDATORY MOTION: Every background MUST have constant movement - camera motion, environmental motion, lighting effects
    - CAMERA MOVEMENTS (use multiple): Smooth push-ins, pull-outs, orbiting circles, rising cranes, gliding sliders, whip pans, dramatic reveals
    - SPEED & PACING: Fast cuts between angles, quick dynamic movements, energetic transitions, never static
    - FUTURISTIC LIGHTING: Vibrant neon glows (cyan, magenta, purple, electric blue), holographic light effects, LED rim lighting, volumetric laser beams, matrix-style data streams
    - TECH ENVIRONMENTS: Futuristic command centers with holographic displays, AI server rooms with glowing racks, neon-lit cyberpunk cityscapes, floating platforms, glass towers with pulsing LED patterns, neural network visualizations
    - VISUAL EFFECTS: Floating holographic interfaces, glowing data particles, electric arcs, aurora-like energy waves, digital rain, circuit patterns, pulsing light trails
-   - SUBJECT ACTIONS: Dynamic gestures interacting with holograms, purposeful movements through tech spaces, head turns with holographic reflections, confident body language - NEVER STATIC
-   - EMOTIONAL ENERGY: Powerful, futuristic, inspiring, tech-forward, commanding presence, next-level confidence
+   - BACKGROUND EFFECTS: Floating holographic interfaces, glowing data particles, electric arcs, aurora-like energy waves, digital rain, circuit patterns
+   - ATMOSPHERE: Powerful, futuristic, inspiring, tech-forward, commanding presence, next-level confidence
    - COLOR GRADING: Vibrant cyberpunk palette (teal/magenta, purple/orange, electric blue/hot pink), high contrast neon vs deep shadows, cinematic sci-fi aesthetic
-   - CONTINUITY: MUST connect logically to previous scene with natural spatial progression
-   - Example: "Silent portrait with no mouth movement. Ultra-dynamic shot in a futuristic AI command center - subject stands confidently surrounded by floating holographic displays showing neural network visualizations. The camera rapidly orbits as neon cyan and magenta lights pulse rhythmically. Volumetric laser beams cut through the atmospheric haze while glowing data particles swirl around the subject. Fast whip pan reveals a massive curved display wall with real-time AI processing visuals. Electric blue rim lighting carves out the subject's silhouette against the purple-tinged darkness. Camera rises dramatically as holographic interfaces materialize around them, ending in a powerful hero shot with cyberpunk color grading and bokeh from hundreds of tiny LED indicators."
+   - CONTINUITY: Background MUST connect logically to previous scene with natural spatial progression
+   - Example: "Keep original motion and lip movement. Leave speaker unchanged. Modify background only. Background: Futuristic AI command center with floating holographic displays showing neural network visualizations. Camera rapidly orbits as neon cyan and magenta lights pulse rhythmically. Volumetric laser beams cut through atmospheric haze while glowing data particles swirl. Massive curved display wall shows real-time AI processing visuals. Electric blue rim lighting against purple-tinged darkness. Holographic interfaces materialize with cyberpunk color grading and bokeh from hundreds of tiny LED indicators. Cinematic 4K quality."
 
 2. backgroundPrompt: High-quality background image prompt
    - Cinematic, professional composition
@@ -388,7 +480,7 @@ For EACH segment, provide:
 Make each segment visually distinct but perfectly connected.
 Ensure ZERO logic breaks or teleporting between scenes.
 Always return to close-up of face at strategic moments (beginning, middle, end).
-
+${nicheUserPromptAddition}
 Format as JSON array with fields: segmentIndex, videoPrompt, backgroundPrompt, transitionType, duration, continuityNote`;
 
     const response = await this.client.chat.completions.create({
@@ -592,6 +684,31 @@ This master prompt ensures all AI services work in harmony to create a cohesive,
       scriptGeneration,
       masterInstructions,
     };
+  }
+
+  /**
+   * Generates raw text response from a prompt (no JSON formatting)
+   * Used for simple text generation tasks like script scenes
+   */
+  async generateRaw(prompt: string, maxTokens: number = 2000): Promise<string> {
+    const response = await this.client.chat.completions.create({
+      model: this.model,
+      messages: [
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ],
+      temperature: 0.7,
+      max_tokens: maxTokens,
+    });
+
+    const content = response.choices[0].message.content;
+    if (!content) {
+      throw new Error('No content generated from OpenAI');
+    }
+
+    return content;
   }
 
   /**

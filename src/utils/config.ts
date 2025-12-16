@@ -79,11 +79,13 @@ export class ConfigLoader {
     seedPortrait: string,
     topic: string,
     platforms?: Platform[],
-    maxVideoLength?: number
+    maxVideoLength?: number,
+    niche?: string
   ): VideoGenerationConfig {
     return {
       seedPortrait,
       topic,
+      niche,  // Pass niche for specialized visual styles (e.g., 'epic-battles')
       voiceCloneId: process.env.ELEVENLABS_VOICE_ID || '',
       videoSegmentDuration: parseInt(
         process.env.VIDEO_SEGMENT_DURATION || '7'

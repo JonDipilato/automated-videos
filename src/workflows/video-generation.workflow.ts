@@ -112,10 +112,40 @@ export class VideoGenerationWorkflow {
       const scriptGeneration = await this.openai.generateScript(
         config.topic,
         contentDuration,              // Use content duration only
-        config.videoSegmentDuration   // Pass segment duration
+        config.videoSegmentDuration,  // Pass segment duration
+        config.niche                  // Pass niche for specialized content
       );
 
       console.log(`✓ Script generated (${scriptGeneration.estimatedDuration}s estimated)`);
+      console.log('');
+
+      // ========================================
+      // 🔍 PRE-TTS PREVIEW: Estimate duration BEFORE spending credits
+      // ========================================
+      const estimatedAudioDuration = this.openai.estimateAudioDuration(scriptGeneration.script);
+      const estimatedSegments = Math.ceil(estimatedAudioDuration / config.videoSegmentDuration) + 1;
+      const maxAllowedDuration = contentDuration + 5; // 5s tolerance
+
+      console.log(`  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      console.log(`  📊 PRE-TTS PREVIEW (BEFORE spending credits):`);
+      console.log(`     Estimated audio: ~${estimatedAudioDuration.toFixed(1)}s`);
+      console.log(`     Target duration: ${contentDuration}s`);
+      console.log(`     Max allowed: ${maxAllowedDuration}s (5s tolerance)`);
+      console.log(`     Estimated segments: ${estimatedSegments}`);
+      console.log(`  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+
+      if (estimatedAudioDuration > maxAllowedDuration) {
+        console.error(`  ❌ ABORT: Estimated duration (${estimatedAudioDuration.toFixed(1)}s) exceeds limit (${maxAllowedDuration}s)`);
+        console.error(`     Script needs to be shorter. This saves API credits!`);
+        throw new Error(`Script too long: estimated ${estimatedAudioDuration.toFixed(1)}s, max ${maxAllowedDuration}s. Reduce topic scope or increase --max-length.`);
+      }
+
+      if (estimatedSegments > 10) {
+        console.error(`  ❌ ABORT: Too many segments (${estimatedSegments}) - max 10 allowed`);
+        throw new Error(`Too many segments estimated (${estimatedSegments}). Reduce topic scope or shorten duration.`);
+      }
+
+      console.log(`  ✅ Preview passed - proceeding with TTS generation`);
       console.log('');
 
       // ========================================
@@ -137,18 +167,34 @@ export class VideoGenerationWorkflow {
       console.log(`✓ Video segments needed: ${audioGeneration.segmentCount}`);
       console.log('');
 
-      // ⚠️ CRITICAL SAFEGUARD: Validate audio duration
-      const audioDurationDiff = Math.abs(audioGeneration.duration - contentDuration);
-      if (audioDurationDiff > 10) {
+      // ⚠️ CRITICAL SAFEGUARD: Validate audio duration (5s tolerance - reduced from 10s)
+      const audioDurationDiff = audioGeneration.duration - contentDuration;
+      if (audioDurationDiff > 5) {
         console.error(`❌ CRITICAL ERROR: Audio duration mismatch!`);
         console.error(`   Target: ${contentDuration}s`);
         console.error(`   Actual: ${audioGeneration.duration.toFixed(2)}s`);
-        console.error(`   Difference: ${audioDurationDiff.toFixed(2)}s`);
+        console.error(`   Over by: ${audioDurationDiff.toFixed(2)}s (max 5s allowed)`);
         console.error(``);
         console.error(`This would generate ${audioGeneration.segmentCount} video segments,`);
         console.error(`which will exhaust your API credits!`);
         console.error(``);
-        throw new Error(`Audio duration (${audioGeneration.duration.toFixed(2)}s) exceeds target (${contentDuration}s) by ${audioDurationDiff.toFixed(2)}s. Generation aborted to protect your credits.`);
+        throw new Error(`Audio duration (${audioGeneration.duration.toFixed(2)}s) exceeds target (${contentDuration}s) by ${audioDurationDiff.toFixed(2)}s (max 5s). Generation aborted to protect credits.`);
+      }
+
+      // Track if we need extra segments (audio slightly over but within tolerance)
+      let needsCatchUpSegments = false;
+      let catchUpSegmentsNeeded = 0;
+      if (audioDurationDiff > 0) {
+        console.log(`  ⚠️ Audio is ${audioDurationDiff.toFixed(2)}s over target (within 5s tolerance)`);
+        // Calculate if we need extra video segments to cover the audio
+        const currentCoverage = audioGeneration.segmentCount * config.videoSegmentDuration;
+        if (audioGeneration.duration > currentCoverage) {
+          catchUpSegmentsNeeded = Math.ceil((audioGeneration.duration - currentCoverage) / config.videoSegmentDuration);
+          needsCatchUpSegments = catchUpSegmentsNeeded > 0;
+          if (needsCatchUpSegments) {
+            console.log(`  📹 Will generate ${catchUpSegmentsNeeded} extra segment(s) to cover full audio`);
+          }
+        }
       }
 
       // ⚠️ CRITICAL SAFEGUARD: Hard limit on segment count
@@ -227,11 +273,24 @@ export class VideoGenerationWorkflow {
       this.logProgress(state);
 
       const portraitDescription = `Portrait from ${config.seedPortrait}`;
+
+      // Add +1 buffer segment PLUS any catch-up segments needed
+      // This prevents audio cutoff - excess video will be trimmed during assembly
+      const totalExtraSegments = 1 + catchUpSegmentsNeeded; // 1 buffer + any catch-up
+      const segmentCountWithBuffer = audioGeneration.segmentCount + totalExtraSegments;
+      console.log(`📹 Generating ${segmentCountWithBuffer} segments:`);
+      console.log(`   Base: ${audioGeneration.segmentCount} (from audio duration)`);
+      console.log(`   Buffer: 1 (for clean ending)`);
+      if (catchUpSegmentsNeeded > 0) {
+        console.log(`   Catch-up: ${catchUpSegmentsNeeded} (audio slightly over target)`);
+      }
+
       const grokPrompts = await this.openai.generateGrokPrompts(
         scriptGeneration,
-        audioGeneration.segmentCount,
+        segmentCountWithBuffer,       // Use buffered + catch-up segment count
         portraitDescription,
-        config.videoSegmentDuration  // Add segment duration
+        config.videoSegmentDuration,  // Add segment duration
+        config.niche                  // Pass niche for visual style
       );
 
       console.log(`✓ Generated ${grokPrompts.length} Grok prompts`);

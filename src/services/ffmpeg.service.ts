@@ -294,7 +294,9 @@ export class FFmpegService {
   }
 
   /**
-   * Syncs audio with video
+   * Syncs audio with video - AUDIO-FIRST APPROACH
+   * Video SHOULD always be longer than audio (due to buffer segment)
+   * If video is shorter, generation failed to produce enough segments
    */
   private async syncAudioVideo(
     videoPath: string,
@@ -309,30 +311,46 @@ export class FFmpegService {
 
     console.log(`    Video: ${videoDuration.toFixed(2)}s, Audio: ${audioDuration.toFixed(2)}s`);
 
-    const durationDiff = audioDuration - videoDuration; // positive = audio longer
+    const durationDiff = audioDuration - videoDuration; // positive = audio longer than video (BAD)
 
-    if (Math.abs(durationDiff) > 0.5) {
-      if (durationDiff > 0) {
-        // Audio is longer than video
-        if (durationDiff > 3.0) {
-          // Large mismatch (>3s) - this shouldn't happen with buffer segment
-          console.error(`    ❌ CRITICAL: Audio exceeds video by ${durationDiff.toFixed(2)}s!`);
-          console.error(`    This indicates insufficient video segments were generated.`);
-          console.error(`    Falling back to freeze-frame, but video quality will suffer.`);
-        }
-        const padSeconds = durationDiff.toFixed(2);
-        console.warn(`    ⚠️  Duration mismatch: audio longer by ${padSeconds}s. Extending video with freeze-frame.`);
-        const command = `ffmpeg -i "${videoPath}" -i "${audioPath}" -filter_complex "[0:v]tpad=stop_mode=clone:stop_duration=${padSeconds}[v]" -map "[v]" -map 1:a:0 -c:v libx264 -c:a aac -b:a 192k "${outputPath}" -y`;
-        execSync(command, { stdio: 'pipe' });
-      } else {
-        // Video is longer -> trim to match audio (much better than adding silence)
-        const padSeconds = Math.abs(durationDiff).toFixed(2);
-        console.log(`    ✓ Video longer by ${padSeconds}s. Trimming excess (buffer segment worked!).`);
-        const command = `ffmpeg -i "${videoPath}" -i "${audioPath}" -filter_complex "[1:a]apad=pad_dur=${padSeconds}[a]" -map 0:v:0 -map "[a]" -c:v libx264 -c:a aac -b:a 192k "${outputPath}" -y`;
-        execSync(command, { stdio: 'pipe' });
-      }
+    // ⚠️ PRE-MERGE VERIFICATION: Video must be >= audio
+    if (durationDiff > 2.0) {
+      // Audio exceeds video by more than 2 seconds - this is a critical error
+      // The workflow should have generated enough segments to cover audio
+      console.error('');
+      console.error(`    ❌ CRITICAL SYNC ERROR: Video too short for audio!`);
+      console.error(`    Video duration: ${videoDuration.toFixed(2)}s`);
+      console.error(`    Audio duration: ${audioDuration.toFixed(2)}s`);
+      console.error(`    Shortfall: ${durationDiff.toFixed(2)}s`);
+      console.error('');
+      console.error(`    This indicates the workflow didn't generate enough video segments.`);
+      console.error(`    Expected: video >= audio (with buffer segment)`);
+      console.error('');
+      throw new Error(
+        `Video (${videoDuration.toFixed(2)}s) is ${durationDiff.toFixed(2)}s shorter than audio (${audioDuration.toFixed(2)}s). ` +
+        `Need more video segments. This should not happen with buffer segment - check workflow.`
+      );
+    }
+
+    if (durationDiff > 0.5 && durationDiff <= 2.0) {
+      // Audio slightly longer (0.5-2s) - use freeze-frame as last resort but warn
+      const padSeconds = durationDiff.toFixed(2);
+      console.warn(`    ⚠️  Minor mismatch: audio longer by ${padSeconds}s.`);
+      console.warn(`    Using freeze-frame to extend video (quality may suffer slightly).`);
+      const command = `ffmpeg -i "${videoPath}" -i "${audioPath}" -filter_complex "[0:v]tpad=stop_mode=clone:stop_duration=${padSeconds}[v]" -map "[v]" -map 1:a:0 -c:v libx264 -c:a aac -b:a 192k "${outputPath}" -y`;
+      execSync(command, { stdio: 'pipe' });
+    } else if (durationDiff < -0.5) {
+      // Video is longer than audio (IDEAL CASE - buffer worked!)
+      // Trim video to match audio exactly
+      const excessSeconds = Math.abs(durationDiff).toFixed(2);
+      console.log(`    ✓ Video longer by ${excessSeconds}s - trimming to match audio (perfect sync!)`);
+
+      // Use -t to trim video to exact audio duration
+      const command = `ffmpeg -i "${videoPath}" -i "${audioPath}" -t ${audioDuration.toFixed(2)} -map 0:v:0 -map 1:a:0 -c:v libx264 -c:a aac -b:a 192k "${outputPath}" -y`;
+      execSync(command, { stdio: 'pipe' });
     } else {
-      // Durations match, simple merge
+      // Durations match (within 0.5s), simple merge
+      console.log(`    ✓ Durations match - direct merge`);
       const command = `ffmpeg -i "${videoPath}" -i "${audioPath}" -c:v copy -c:a aac -b:a 192k -map 0:v:0 -map 1:a:0 "${outputPath}" -y`;
       execSync(command, { stdio: 'pipe' });
     }
@@ -626,6 +644,242 @@ export class FFmpegService {
       console.error(`Failed to extract and composite frame from ${videoPath}:`, error);
       throw error;
     }
+  }
+
+  // ============================================
+  // LIP SYNC WORKFLOW METHODS
+  // For videos generated with Grok native audio
+  // ============================================
+
+  /**
+   * Extract audio track from a video file
+   * Used for: Extracting Grok-generated audio for voice replacement workflow
+   */
+  async extractAudio(
+    videoPath: string,
+    outputPath: string
+  ): Promise<string> {
+    try {
+      console.log(`  Extracting audio from video...`);
+
+      // Extract audio as MP3 with high quality
+      const command = `ffmpeg -i "${videoPath}" -vn -acodec libmp3lame -ab 192k -ar 44100 "${outputPath}" -y`;
+
+      execSync(command, { stdio: 'pipe' });
+
+      if (fs.existsSync(outputPath)) {
+        const stats = fs.statSync(outputPath);
+        console.log(`  ✓ Audio extracted: ${path.basename(outputPath)} (${(stats.size / 1024).toFixed(1)}KB)`);
+      }
+
+      return outputPath;
+    } catch (error) {
+      console.error(`Failed to extract audio from ${videoPath}:`, error);
+      throw new Error(`Audio extraction failed: ${error}`);
+    }
+  }
+
+  /**
+   * Replace the audio track in a video with a new audio file
+   * Used for: Swapping Grok's AI voice with ElevenLabs cloned voice
+   *
+   * @param videoPath - Video with original audio
+   * @param newAudioPath - New audio to use (e.g., ElevenLabs generated)
+   * @param outputPath - Output video with replaced audio
+   */
+  async replaceAudioTrack(
+    videoPath: string,
+    newAudioPath: string,
+    outputPath: string
+  ): Promise<string> {
+    try {
+      console.log(`  Replacing audio track...`);
+
+      const videoDuration = await this.getVideoDuration(videoPath);
+      const audioDuration = await this.getVideoDuration(newAudioPath);
+
+      console.log(`    Video: ${videoDuration.toFixed(2)}s, New audio: ${audioDuration.toFixed(2)}s`);
+
+      // Map video stream from first input, audio from second input
+      // Use -shortest to trim to shorter duration if mismatch
+      const command = `ffmpeg -i "${videoPath}" -i "${newAudioPath}" -c:v copy -c:a aac -b:a 192k -map 0:v:0 -map 1:a:0 -shortest "${outputPath}" -y`;
+
+      execSync(command, { stdio: 'pipe' });
+
+      const outputDuration = await this.getVideoDuration(outputPath);
+      console.log(`  ✓ Audio replaced. Final duration: ${outputDuration.toFixed(2)}s`);
+
+      return outputPath;
+    } catch (error) {
+      console.error(`Failed to replace audio in ${videoPath}:`, error);
+      throw new Error(`Audio replacement failed: ${error}`);
+    }
+  }
+
+  /**
+   * Concatenate video segments that already have embedded audio
+   * Used for: Joining Grok lip-sync segments (which have native audio)
+   *
+   * Unlike the existing assembleVideo (which adds separate audio track),
+   * this preserves the audio from each segment.
+   *
+   * @param segments - Array of video file paths (each with audio)
+   * @param outputPath - Output concatenated video
+   * @param applyTransitions - Whether to apply crossfade transitions
+   */
+  async concatenateWithAudio(
+    segments: string[],
+    outputPath: string,
+    applyTransitions: boolean = true
+  ): Promise<AssembledVideo> {
+    try {
+      console.log(`🎬 Concatenating ${segments.length} lip-sync segments with audio...`);
+
+      if (segments.length === 0) {
+        throw new Error('No segments provided for concatenation');
+      }
+
+      if (segments.length === 1) {
+        // Single segment - just copy it
+        fs.copyFileSync(segments[0], outputPath);
+        const duration = await this.getVideoDuration(outputPath);
+        return {
+          videoPath: outputPath,
+          duration,
+          resolution: `${this.resolution}p`,
+          fileSize: fs.statSync(outputPath).size,
+          format: 'mp4',
+          hasAudio: true,
+          hasCTA: false,
+        };
+      }
+
+      // Get durations for all segments
+      const segmentDurations: number[] = [];
+      for (const segment of segments) {
+        const duration = await this.getVideoDuration(segment);
+        segmentDurations.push(duration);
+        console.log(`  Segment ${segmentDurations.length}: ${duration.toFixed(2)}s`);
+      }
+
+      if (applyTransitions) {
+        // Apply smooth transitions while preserving audio
+        await this.concatenateWithTransitionsAndAudio(segments, segmentDurations, outputPath);
+      } else {
+        // Simple concatenation without transitions
+        await this.simpleConcatenateWithAudio(segments, outputPath);
+      }
+
+      const duration = await this.getVideoDuration(outputPath);
+      const fileSize = fs.statSync(outputPath).size;
+
+      console.log(`✓ Concatenated video: ${outputPath}`);
+      console.log(`  Duration: ${duration.toFixed(2)}s`);
+      console.log(`  Size: ${(fileSize / 1024 / 1024).toFixed(2)}MB`);
+
+      return {
+        videoPath: outputPath,
+        duration,
+        resolution: `${this.resolution}p`,
+        fileSize,
+        format: 'mp4',
+        hasAudio: true,
+        hasCTA: false,
+      };
+    } catch (error) {
+      console.error('Concatenation with audio failed:', error);
+      throw new Error(`Failed to concatenate segments: ${error}`);
+    }
+  }
+
+  /**
+   * Concatenate with transitions (crossfade) while keeping embedded audio
+   */
+  private async concatenateWithTransitionsAndAudio(
+    segments: string[],
+    segmentDurations: number[],
+    outputPath: string
+  ): Promise<void> {
+    const transitionDuration = 0.5; // 0.5s crossfade
+
+    // Build FFmpeg filter complex for video and audio transitions
+    let filterComplex = '';
+    let inputs = '';
+
+    // Add all input files
+    segments.forEach((segment) => {
+      inputs += `-i "${segment}" `;
+    });
+
+    // Calculate cumulative offset for transitions
+    let cumulativeOffset = 0;
+
+    for (let i = 0; i < segments.length - 1; i++) {
+      const input1 = i === 0 ? '[0:v]' : `[v${i}]`;
+      const input2 = `[${i + 1}:v]`;
+      const output = i === segments.length - 2 ? '[vout]' : `[v${i + 1}]`;
+
+      // Calculate offset for video transition
+      const offset = cumulativeOffset + segmentDurations[i] - transitionDuration;
+
+      // Video crossfade
+      filterComplex += `${input1}${input2}xfade=transition=fade:duration=${transitionDuration}:offset=${offset}${output};`;
+
+      cumulativeOffset += segmentDurations[i] - transitionDuration;
+    }
+
+    // Audio crossfade
+    let audioChain = '[0:a]';
+    for (let i = 1; i < segments.length; i++) {
+      const prevAudio = audioChain;
+      const nextAudio = `[${i}:a]`;
+      const output = i === segments.length - 1 ? '[aout]' : `[a${i}]`;
+
+      filterComplex += `${prevAudio}${nextAudio}acrossfade=d=${transitionDuration}${output};`;
+      audioChain = output;
+    }
+
+    const command = `ffmpeg ${inputs} -filter_complex "${filterComplex}" -map "[vout]" -map "[aout]" -c:v ${this.codec} -preset slow -crf 18 -b:v ${this.bitrate} -r ${this.fps} -pix_fmt yuv420p -c:a aac -b:a 192k "${outputPath}" -y`;
+
+    try {
+      execSync(command, { stdio: 'pipe' });
+    } catch (error) {
+      console.warn('Transition concatenation failed, using simple concat fallback');
+      await this.simpleConcatenateWithAudio(segments, outputPath);
+    }
+  }
+
+  /**
+   * Simple concatenation without transitions (preserves audio)
+   */
+  private async simpleConcatenateWithAudio(
+    segments: string[],
+    outputPath: string
+  ): Promise<void> {
+    // Create concat file list
+    const concatFilePath = path.join(
+      path.dirname(outputPath),
+      'concat_lipsync_list.txt'
+    );
+    const concatContent = segments
+      .map((segment) => `file '${path.resolve(segment)}'`)
+      .join('\n');
+    fs.writeFileSync(concatFilePath, concatContent);
+
+    // Concatenate using concat demuxer (preserves both video and audio)
+    const command = `ffmpeg -f concat -safe 0 -i "${concatFilePath}" -c copy "${outputPath}" -y`;
+
+    execSync(command, { stdio: 'pipe' });
+
+    // Clean up concat file
+    fs.unlinkSync(concatFilePath);
+  }
+
+  /**
+   * Get public method for video duration (expose private method)
+   */
+  async getDuration(filePath: string): Promise<number> {
+    return this.getVideoDuration(filePath);
   }
 
   /**
