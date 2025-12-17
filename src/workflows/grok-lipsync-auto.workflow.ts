@@ -311,7 +311,13 @@ Return ONLY the JSON array, no other text.`;
         throw new Error('Failed to parse scenes JSON from AI response');
       }
 
-      const scenes: GeneratedScene[] = JSON.parse(jsonMatch[0]);
+      // Clean up common JSON formatting issues from LLMs
+      let jsonString = jsonMatch[0]
+        .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
+        .replace(/\n/g, ' ') // Remove newlines
+        .replace(/\s+/g, ' '); // Normalize whitespace
+
+      const scenes: GeneratedScene[] = JSON.parse(jsonString);
 
       // Validate and clean scenes
       return scenes.slice(0, sceneCount).map((scene, index) => ({
@@ -379,13 +385,30 @@ Return ONLY the JSON array, no other text.`;
 
       console.log(`   ✓ Segment ${i + 1} generated with lip-sync audio`);
 
+      // Trim first 0.5s from segments 2+ to remove dual-portrait artifacts
+      let videoUrlForChaining = result.videoUrl;
+      if (!isFirstSegment) {
+        try {
+          const trimmedVideoPath = path.join(videoDir, `segment_${i}_trimmed.mp4`);
+          await this.ffmpeg.trimVideoStart(result.videoUrl, trimmedVideoPath, 0.5);
+
+          // Update the result to use the trimmed version
+          results[results.length - 1].videoUrl = trimmedVideoPath;
+          videoUrlForChaining = trimmedVideoPath;
+
+          console.log(`   ✓ Trimmed first 0.5s to remove transition artifacts`);
+        } catch (error: any) {
+          console.warn(`   ⚠️  Trimming failed, using original: ${error.message}`);
+        }
+      }
+
       // Frame chaining for next segment
       if (!isLastSegment) {
         try {
           const compositedFramePath = path.join(imageDir, `transition_composite_${i}.jpg`);
 
           await this.ffmpeg.extractLastFrameAndComposite(
-            result.videoUrl,
+            videoUrlForChaining,
             initialPortraitPath,
             compositedFramePath
           );

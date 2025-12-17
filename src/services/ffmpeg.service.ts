@@ -680,6 +680,34 @@ export class FFmpegService {
   }
 
   /**
+   * Trim the beginning of a video (useful for removing transition artifacts)
+   */
+  async trimVideoStart(
+    inputPath: string,
+    outputPath: string,
+    trimSeconds: number = 0.5
+  ): Promise<string> {
+    try {
+      console.log(`  Trimming first ${trimSeconds}s from video...`);
+
+      // Trim from the start, re-encode to ensure clean cut
+      const command = `ffmpeg -i "${inputPath}" -ss ${trimSeconds} -c:v ${this.codec} -c:a aac -b:v ${this.bitrate} -preset fast "${outputPath}" -y`;
+
+      execSync(command, { stdio: 'pipe' });
+
+      if (fs.existsSync(outputPath)) {
+        const stats = fs.statSync(outputPath);
+        console.log(`  ✓ Video trimmed: ${path.basename(outputPath)} (${(stats.size / (1024 * 1024)).toFixed(1)}MB)`);
+      }
+
+      return outputPath;
+    } catch (error) {
+      console.error(`Failed to trim video ${inputPath}:`, error);
+      throw new Error(`Video trimming failed: ${error}`);
+    }
+  }
+
+  /**
    * Replace the audio track in a video with a new audio file
    * Used for: Swapping Grok's AI voice with ElevenLabs cloned voice
    *
