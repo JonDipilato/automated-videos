@@ -11,8 +11,15 @@ export class GCSStorageService {
   private bucketPath: string;
 
   constructor() {
-    this.bucketName = process.env.GCS_BUCKET_NAME || 'videobucket1234';
-    this.bucketPath = process.env.GCS_BUCKET_PATH || 'seed-bucket';
+    // Require environment variables - no hardcoded fallbacks
+    if (!process.env.GCS_BUCKET_NAME || !process.env.GCS_BUCKET_PATH) {
+      throw new Error(
+        'GCS configuration required: Please set GCS_BUCKET_NAME and GCS_BUCKET_PATH in your .env file'
+      );
+    }
+
+    this.bucketName = process.env.GCS_BUCKET_NAME;
+    this.bucketPath = process.env.GCS_BUCKET_PATH;
 
     // Initialize storage with credentials if provided
     const credentialsPath = process.env.GCS_CREDENTIALS_PATH;
