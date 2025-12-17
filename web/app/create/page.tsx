@@ -28,7 +28,14 @@ const BACKGROUND_MOODS = [
   { value: "custom", label: "Custom", icon: "🎨", description: "Use your descriptions as-is" },
 ] as const;
 
+// Workflow options for video generation
+const WORKFLOW_OPTIONS = [
+  { value: "composite", label: "Composite", icon: "🖼️", description: "Portrait overlay + frame trimming (original)" },
+  { value: "direct", label: "Direct Frame", icon: "🎯", description: "Direct last frame extraction (cleaner)" },
+] as const;
+
 type BackgroundMood = typeof BACKGROUND_MOODS[number]["value"];
+type VideoWorkflow = typeof WORKFLOW_OPTIONS[number]["value"];
 type GenerationMode = "grok-lipsync" | "elevenlabs-tts";
 
 // Popular ElevenLabs voices with their IDs
@@ -79,6 +86,7 @@ export default function CreatePage() {
     duration: "45",
     platforms: ["youtube", "tiktok"],
     backgroundMood: "dramatic" as BackgroundMood,
+    workflow: "composite" as VideoWorkflow,
   });
 
   // Custom script state
@@ -254,6 +262,7 @@ export default function CreatePage() {
             duration: parseInt(lipSyncFormData.duration),
             platforms: lipSyncFormData.platforms,
             backgroundMood: lipSyncFormData.backgroundMood,
+            workflow: lipSyncFormData.workflow,
           })
         });
 
@@ -1191,6 +1200,51 @@ export default function CreatePage() {
                 <p className="text-sm text-pink-300 mt-2">
                   {BACKGROUND_MOODS.find(m => m.value === lipSyncFormData.backgroundMood)?.description}
                 </p>
+              </div>
+
+              {/* Workflow Selection */}
+              <div>
+                <Label className="text-white text-lg font-semibold mb-3 block">
+                  Generation Workflow
+                  <span className="text-pink-300 text-sm font-normal ml-2">
+                    ({WORKFLOW_OPTIONS.find(w => w.value === lipSyncFormData.workflow)?.label})
+                  </span>
+                </Label>
+                <div className="grid grid-cols-2 gap-3">
+                  {WORKFLOW_OPTIONS.map((workflow) => (
+                    <button
+                      key={workflow.value}
+                      type="button"
+                      onClick={() => setLipSyncFormData({ ...lipSyncFormData, workflow: workflow.value })}
+                      className={`relative p-4 rounded-xl border-2 transition-all duration-200 text-left ${
+                        lipSyncFormData.workflow === workflow.value
+                          ? "border-pink-400 bg-gradient-to-br from-pink-500/20 to-purple-500/20 shadow-lg"
+                          : "border-white/20 bg-white/5 hover:bg-white/10 hover:border-white/40"
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="text-2xl">{workflow.icon}</div>
+                        <div className="flex-1">
+                          <div className={`text-sm font-medium mb-1 ${
+                            lipSyncFormData.workflow === workflow.value ? "text-white" : "text-purple-200"
+                          }`}>
+                            {workflow.label}
+                          </div>
+                          <div className="text-xs text-purple-300/80">
+                            {workflow.description}
+                          </div>
+                        </div>
+                      </div>
+                      {lipSyncFormData.workflow === workflow.value && (
+                        <div className="absolute top-2 right-2 w-4 h-4 bg-pink-500 rounded-full flex items-center justify-center">
+                          <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Platform Selection - Same as AI Generated */}

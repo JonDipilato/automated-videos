@@ -257,6 +257,13 @@ export interface LipSyncScene {
 export type BackgroundMood = 'dramatic' | 'futuristic' | 'nature' | 'urban' | 'corporate' | 'custom';
 
 /**
+ * Video generation workflow selection
+ */
+export type VideoWorkflow =
+  | 'composite'  // Original: Extracts last frame + composites portrait + trims
+  | 'direct';    // New: Direct last frame extraction (no compositing, no trimming)
+
+/**
  * Video generation mode selection
  */
 export type GenerationMode = 'grok-lipsync' | 'elevenlabs-tts';

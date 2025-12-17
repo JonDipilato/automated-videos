@@ -10,7 +10,8 @@ import { FFmpegService } from '../../../../src/services/ffmpeg.service';
 import { CaptionsService } from '../../../../src/services/captions.service';
 import { KieLipSyncService } from '../../../../src/services/kie-lipsync.service';
 import { GrokLipSyncAutoWorkflow } from '../../../../src/workflows/grok-lipsync-auto.workflow';
-import { Platform, BackgroundMood } from '../../../../src/types';
+import { GrokLipSyncDirectWorkflow } from '../../../../src/workflows/grok-lipsync-direct.workflow';
+import { Platform, BackgroundMood, VideoWorkflow } from '../../../../src/types';
 
 // Request body type
 interface LipSyncAutoRequest {
@@ -20,12 +21,13 @@ interface LipSyncAutoRequest {
   platforms: Platform[];
   backgroundMood: BackgroundMood;
   duration: number;
+  workflow?: VideoWorkflow; // Optional, defaults to 'composite'
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json() as LipSyncAutoRequest;
-    const { niche, topic, portraitPath, platforms, backgroundMood, duration } = body;
+    const { niche, topic, portraitPath, platforms, backgroundMood, duration, workflow } = body;
 
     // Validate database queries are available
     if (!videoQueries?.create || !jobQueries?.create) {
@@ -77,7 +79,8 @@ export async function POST(request: NextRequest) {
       portraitPath: finalPortraitPath,
       platforms: platforms || ['youtube', 'tiktok'],
       backgroundMood: backgroundMood || 'dramatic',
-      duration: duration || 30
+      duration: duration || 30,
+      workflow: workflow || 'composite' // Default to composite workflow
     }).catch((error) => {
       console.error('Background lip-sync auto generation error:', error);
       jobQueries.fail.run(error.message, jobId);
@@ -101,6 +104,7 @@ async function startLipSyncAutoGeneration(
     platforms: Platform[];
     backgroundMood: BackgroundMood;
     duration: number;
+    workflow: VideoWorkflow;
   }
 ) {
   try {
@@ -124,13 +128,11 @@ async function startLipSyncAutoGeneration(
 
     // Create workflow with correct output directory
     const workDir = path.resolve(process.cwd(), '..', 'output');
-    const workflow = new GrokLipSyncAutoWorkflow(
-      openai,
-      kieLipSync,
-      ffmpeg,
-      captions,
-      workDir
-    );
+
+    // Instantiate the correct workflow based on selection
+    const workflow = params.workflow === 'direct'
+      ? new GrokLipSyncDirectWorkflow(openai, kieLipSync, ffmpeg, captions, workDir)
+      : new GrokLipSyncAutoWorkflow(openai, kieLipSync, ffmpeg, captions, workDir);
 
     // Update progress
     jobQueries.updateProgress.run('generating', 'Starting automatic script generation...', 5, jobId);
@@ -145,6 +147,7 @@ async function startLipSyncAutoGeneration(
     console.log(`🎨 Background Mood: ${params.backgroundMood}`);
     console.log(`⏱️  Duration: ${params.duration}s`);
     console.log(`🎤 Voice: Grok Native Lip Sync`);
+    console.log(`🔄 Workflow: ${params.workflow === 'direct' ? 'Direct Frame (No Compositing)' : 'Composite (Portrait Overlay)'}`);
     console.log('');
 
     // Run generation with progress updates
