@@ -23,9 +23,33 @@ interface LipSyncAutoRequest {
 }
 
 export async function POST(request: NextRequest) {
+  console.log('🎬 [LIPSYNC-AUTO] POST request received');
   try {
+    console.log('🎬 [LIPSYNC-AUTO] Parsing request body...');
     const body = await request.json() as LipSyncAutoRequest;
     const { niche, topic, portraitPath, platforms, backgroundMood, duration } = body;
+    console.log('🎬 [LIPSYNC-AUTO] Body parsed:', { niche, topic, duration });
+
+    // Validate environment variables EARLY before doing anything else
+    console.log('🎬 [LIPSYNC-AUTO] Checking KIE_API_KEY...');
+    const kieApiKey = process.env.KIE_API_KEY;
+    if (!kieApiKey) {
+      console.error('KIE_API_KEY environment variable is missing');
+      return NextResponse.json({
+        error: 'Server configuration error: KIE_API_KEY is not configured'
+      }, { status: 500 });
+    }
+
+    // Load and validate service config early
+    console.log('🎬 [LIPSYNC-AUTO] Loading service config...');
+    const config = ConfigLoader.loadServiceConfig();
+    console.log('🎬 [LIPSYNC-AUTO] Config loaded, checking OPENAI_API_KEY...');
+    if (!config.openai.apiKey) {
+      console.error('OPENAI_API_KEY environment variable is missing');
+      return NextResponse.json({
+        error: 'Server configuration error: OPENAI_API_KEY is not configured'
+      }, { status: 500 });
+    }
 
     // Validate database queries are available
     if (!videoQueries?.create || !jobQueries?.create) {
@@ -71,6 +95,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Start generation in background (non-blocking)
+    // Pass the already-validated config to avoid re-loading
     startLipSyncAutoGeneration(jobId, videoId, {
       niche,
       topic,
@@ -78,16 +103,22 @@ export async function POST(request: NextRequest) {
       platforms: platforms || ['youtube', 'tiktok'],
       backgroundMood: backgroundMood || 'dramatic',
       duration: duration || 30
-    }).catch((error) => {
-      console.error('Background lip-sync auto generation error:', error);
-      jobQueries.fail.run(error.message, jobId);
+    }, config, kieApiKey).catch((error) => {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error('Background lip-sync auto generation error:', errorMsg);
+      jobQueries.fail.run(errorMsg, jobId);
       videoQueries.updateStatus.run('failed', videoId);
     });
 
+    console.log('🎬 [LIPSYNC-AUTO] Returning success response:', { jobId, videoId });
     return NextResponse.json({ jobId, videoId, status: 'started' });
   } catch (error) {
-    console.error('Generate Lip Sync Auto API error:', error);
-    return NextResponse.json({ error: 'Generation failed' }, { status: 500 });
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('Generate Lip Sync Auto API error:', errorMessage);
+    return NextResponse.json({
+      error: 'Generation failed',
+      details: errorMessage
+    }, { status: 500 });
   }
 }
 
@@ -101,22 +132,15 @@ async function startLipSyncAutoGeneration(
     platforms: Platform[];
     backgroundMood: BackgroundMood;
     duration: number;
-  }
+  },
+  config: ReturnType<typeof ConfigLoader.loadServiceConfig>,
+  kieApiKey: string
 ) {
   try {
     // Update job status
     jobQueries.updateProgress.run('generating', 'Initializing Grok Lip Sync Auto services...', 0, jobId);
 
-    // Load configuration
-    const config = ConfigLoader.loadServiceConfig();
-
-    // Initialize services
-    // KIE API uses its own key (same as GrokService)
-    const kieApiKey = process.env.KIE_API_KEY || '';
-    if (!kieApiKey) {
-      throw new Error('KIE_API_KEY environment variable is required');
-    }
-
+    // Initialize services with pre-validated config
     const openai = new OpenAIService(config.openai.apiKey);
     const kieLipSync = new KieLipSyncService(kieApiKey);
     const ffmpeg = new FFmpegService(1080, 30, 'libx264', '5000k');

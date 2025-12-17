@@ -11,8 +11,12 @@ export class GCSStorageService {
   private bucketPath: string;
 
   constructor() {
-    this.bucketName = process.env.GCS_BUCKET_NAME || 'videobucket1234';
-    this.bucketPath = process.env.GCS_BUCKET_PATH || 'seed-bucket';
+    this.bucketName = process.env.GCS_BUCKET_NAME || '';
+    this.bucketPath = process.env.GCS_BUCKET_PATH || 'uploads';
+
+    if (!this.bucketName) {
+      throw new Error('GCS_BUCKET_NAME environment variable is required. Please set it in your .env file.');
+    }
 
     // Initialize storage with credentials if provided
     const credentialsPath = process.env.GCS_CREDENTIALS_PATH;
@@ -47,14 +51,21 @@ export class GCSStorageService {
 
       console.log(`  ↳ Uploading to GCS: gs://${this.bucketName}/${destination}`);
 
-      // Upload file
-      await this.storage.bucket(this.bucketName).upload(localFilePath, {
+      // Upload file with timeout
+      const uploadPromise = this.storage.bucket(this.bucketName).upload(localFilePath, {
         destination: destination,
         metadata: {
           cacheControl: 'public, max-age=3600',
         },
         // Don't use legacy ACL (uniform bucket-level access is enabled)
       });
+
+      // Add 30 second timeout
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('GCS upload timed out after 30 seconds')), 30000);
+      });
+
+      await Promise.race([uploadPromise, timeoutPromise]);
 
       // Public access is managed via bucket-level IAM policy
       // No need to call makePublic() - bucket is already configured with allUsers objectViewer role

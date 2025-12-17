@@ -28,6 +28,32 @@ export async function POST(request: NextRequest) {
     const body = await request.json() as LipSyncRequest;
     const { title, portraitPath, platforms, backgroundMood, replaceVoice, voiceId, scenes } = body;
 
+    // Validate environment variables EARLY before doing anything else
+    const kieApiKey = process.env.KIE_API_KEY;
+    if (!kieApiKey) {
+      console.error('KIE_API_KEY environment variable is missing');
+      return NextResponse.json({
+        error: 'Server configuration error: KIE_API_KEY is not configured'
+      }, { status: 500 });
+    }
+
+    // Load and validate service config early
+    const config = ConfigLoader.loadServiceConfig();
+    if (!config.openai.apiKey) {
+      console.error('OPENAI_API_KEY environment variable is missing');
+      return NextResponse.json({
+        error: 'Server configuration error: OPENAI_API_KEY is not configured'
+      }, { status: 500 });
+    }
+
+    // Validate ElevenLabs config if voice replacement is requested
+    if (replaceVoice && !config.elevenlabs.apiKey) {
+      console.error('ELEVENLABS_API_KEY required for voice replacement');
+      return NextResponse.json({
+        error: 'Server configuration error: ELEVENLABS_API_KEY is required for voice replacement'
+      }, { status: 500 });
+    }
+
     // Validate database queries are available
     if (!videoQueries?.create || !jobQueries?.create) {
       console.error('Database not properly initialized');
@@ -80,6 +106,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Start generation in background (non-blocking)
+    // Pass the already-validated config to avoid re-loading
     startLipSyncGeneration(jobId, videoId, {
       title,
       portraitPath: finalPortraitPath,
@@ -88,16 +115,21 @@ export async function POST(request: NextRequest) {
       replaceVoice: replaceVoice || false,
       voiceId: voiceId || null,
       scenes
-    }).catch((error) => {
-      console.error('Background lip-sync generation error:', error);
-      jobQueries.fail.run(error.message, jobId);
+    }, config, kieApiKey).catch((error) => {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error('Background lip-sync generation error:', errorMsg);
+      jobQueries.fail.run(errorMsg, jobId);
       videoQueries.updateStatus.run('failed', videoId);
     });
 
     return NextResponse.json({ jobId, videoId, status: 'started' });
   } catch (error) {
-    console.error('Generate Lip Sync API error:', error);
-    return NextResponse.json({ error: 'Generation failed' }, { status: 500 });
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('Generate Lip Sync API error:', errorMessage);
+    return NextResponse.json({
+      error: 'Generation failed',
+      details: errorMessage
+    }, { status: 500 });
   }
 }
 
@@ -112,21 +144,15 @@ async function startLipSyncGeneration(
     replaceVoice: boolean;
     voiceId: string | null;
     scenes: LipSyncScene[];
-  }
+  },
+  config: ReturnType<typeof ConfigLoader.loadServiceConfig>,
+  kieApiKey: string
 ) {
   try {
     // Update job status
     jobQueries.updateProgress.run('generating', 'Initializing Grok Lip Sync services...', 0, jobId);
 
-    // Load configuration
-    const config = ConfigLoader.loadServiceConfig();
-
-    // Initialize services
-    // KIE API uses its own key (same as GrokService)
-    const kieApiKey = process.env.KIE_API_KEY || '';
-    if (!kieApiKey) {
-      throw new Error('KIE_API_KEY environment variable is required');
-    }
+    // Initialize services with pre-validated config
     const kieLipSync = new KieLipSyncService(kieApiKey);
     const ffmpeg = new FFmpegService(1080, 30, 'libx264', '5000k');
     const captions = new CaptionsService(config.openai.apiKey);
