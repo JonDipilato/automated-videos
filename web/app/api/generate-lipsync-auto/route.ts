@@ -8,6 +8,7 @@ import { ConfigLoader } from '../../../../src/utils/config';
 import { OpenAIService } from '../../../../src/services/openai.service';
 import { FFmpegService } from '../../../../src/services/ffmpeg.service';
 import { CaptionsService } from '../../../../src/services/captions.service';
+import { ElevenLabsService } from '../../../../src/services/elevenlabs.service';
 import { KieLipSyncService } from '../../../../src/services/kie-lipsync.service';
 import { GrokLipSyncAutoWorkflow } from '../../../../src/workflows/grok-lipsync-auto.workflow';
 import { Platform, BackgroundMood } from '../../../../src/types';
@@ -20,6 +21,8 @@ interface LipSyncAutoRequest {
   platforms: Platform[];
   backgroundMood: BackgroundMood;
   duration: number;
+  replaceVoice?: boolean;      // Optional: Replace Grok voice with ElevenLabs
+  voiceId?: string | null;     // Optional: ElevenLabs voice ID
 }
 
 export async function POST(request: NextRequest) {
@@ -27,8 +30,8 @@ export async function POST(request: NextRequest) {
   try {
     console.log('🎬 [LIPSYNC-AUTO] Parsing request body...');
     const body = await request.json() as LipSyncAutoRequest;
-    const { niche, topic, portraitPath, platforms, backgroundMood, duration } = body;
-    console.log('🎬 [LIPSYNC-AUTO] Body parsed:', { niche, topic, duration });
+    const { niche, topic, portraitPath, platforms, backgroundMood, duration, replaceVoice, voiceId } = body;
+    console.log('🎬 [LIPSYNC-AUTO] Body parsed:', { niche, topic, duration, replaceVoice });
 
     // Validate environment variables EARLY before doing anything else
     console.log('🎬 [LIPSYNC-AUTO] Checking KIE_API_KEY...');
@@ -48,6 +51,14 @@ export async function POST(request: NextRequest) {
       console.error('OPENAI_API_KEY environment variable is missing');
       return NextResponse.json({
         error: 'Server configuration error: OPENAI_API_KEY is not configured'
+      }, { status: 500 });
+    }
+
+    // Validate ElevenLabs config if voice replacement is requested
+    if (replaceVoice && !config.elevenlabs.apiKey) {
+      console.error('ELEVENLABS_API_KEY required for voice replacement');
+      return NextResponse.json({
+        error: 'Server configuration error: ELEVENLABS_API_KEY is required for voice replacement'
       }, { status: 500 });
     }
 
@@ -102,7 +113,9 @@ export async function POST(request: NextRequest) {
       portraitPath: finalPortraitPath,
       platforms: platforms || ['youtube', 'tiktok'],
       backgroundMood: backgroundMood || 'dramatic',
-      duration: duration || 30
+      duration: duration || 30,
+      replaceVoice: replaceVoice || false,
+      voiceId: voiceId || null
     }, config, kieApiKey).catch((error) => {
       const errorMsg = error instanceof Error ? error.message : String(error);
       console.error('Background lip-sync auto generation error:', errorMsg);
@@ -132,6 +145,8 @@ async function startLipSyncAutoGeneration(
     platforms: Platform[];
     backgroundMood: BackgroundMood;
     duration: number;
+    replaceVoice: boolean;
+    voiceId: string | null;
   },
   config: ReturnType<typeof ConfigLoader.loadServiceConfig>,
   kieApiKey: string
@@ -146,6 +161,18 @@ async function startLipSyncAutoGeneration(
     const ffmpeg = new FFmpegService(1080, 30, 'libx264', '5000k');
     const captions = new CaptionsService(config.openai.apiKey);
 
+    // Initialize ElevenLabs only if voice replacement is needed
+    let elevenlabs: ElevenLabsService | undefined = undefined;
+    if (params.replaceVoice) {
+      const selectedVoiceId = params.voiceId || config.elevenlabs.voiceId;
+      console.log(`🎤 Voice replacement enabled. Using: ${selectedVoiceId}`);
+      elevenlabs = new ElevenLabsService(
+        config.elevenlabs.apiKey,
+        selectedVoiceId,
+        config.elevenlabs.voiceSettings
+      );
+    }
+
     // Create workflow with correct output directory
     const workDir = path.resolve(process.cwd(), '..', 'output');
     const workflow = new GrokLipSyncAutoWorkflow(
@@ -153,7 +180,8 @@ async function startLipSyncAutoGeneration(
       kieLipSync,
       ffmpeg,
       captions,
-      workDir
+      workDir,
+      elevenlabs
     );
 
     // Update progress
@@ -168,7 +196,7 @@ async function startLipSyncAutoGeneration(
     console.log(`📝 Topic: ${params.topic}`);
     console.log(`🎨 Background Mood: ${params.backgroundMood}`);
     console.log(`⏱️  Duration: ${params.duration}s`);
-    console.log(`🎤 Voice: Grok Native Lip Sync`);
+    console.log(`🎤 Voice: ${params.replaceVoice ? 'ElevenLabs (time-matched)' : 'Grok Native Lip Sync'}`);
     console.log('');
 
     // Run generation with progress updates
@@ -187,7 +215,9 @@ async function startLipSyncAutoGeneration(
         } catch (err) {
           console.error('Failed to update progress in database:', err);
         }
-      }
+      },
+      params.replaceVoice,
+      params.voiceId || undefined
     );
 
     if (result.success) {

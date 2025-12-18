@@ -10,6 +10,7 @@ import {
 import { OpenAIService } from '../services/openai.service';
 import { KieLipSyncService } from '../services/kie-lipsync.service';
 import { FFmpegService } from '../services/ffmpeg.service';
+import { ElevenLabsService } from '../services/elevenlabs.service';
 import { CaptionsService, YOUTUBE_SHORTS_STYLE } from '../services/captions.service';
 import { GCSStorageService } from '../services/gcs-storage.service';
 import { LipSyncScene } from './grok-lipsync.workflow';
@@ -40,6 +41,7 @@ export class GrokLipSyncAutoWorkflow {
   private openai: OpenAIService;
   private kieLipSync: KieLipSyncService;
   private ffmpeg: FFmpegService;
+  private elevenlabs?: ElevenLabsService;
   private captions: CaptionsService;
   private gcsStorage: GCSStorageService;
   private workDir: string;
@@ -55,18 +57,30 @@ export class GrokLipSyncAutoWorkflow {
     kieLipSync: KieLipSyncService,
     ffmpeg: FFmpegService,
     captions: CaptionsService,
-    workDir: string = './output'
+    workDir: string = './output',
+    elevenlabs?: ElevenLabsService
   ) {
     this.openai = openai;
     this.kieLipSync = kieLipSync;
     this.ffmpeg = ffmpeg;
     this.captions = captions;
+    this.elevenlabs = elevenlabs;
     this.gcsStorage = new GCSStorageService();
     this.workDir = workDir;
   }
 
   /**
    * Main generation method - fully automatic
+   *
+   * @param niche - Content niche (e.g., 'ai-tech', 'fitness')
+   * @param topic - Video topic
+   * @param portraitPath - Path to portrait image (URL or local)
+   * @param platforms - Target platforms
+   * @param backgroundMood - Background style mood
+   * @param duration - Target video duration in seconds
+   * @param progressCallback - Optional progress callback
+   * @param replaceVoice - Optional: Replace Grok voice with ElevenLabs
+   * @param voiceId - Optional: ElevenLabs voice ID (uses default if not provided)
    */
   async generate(
     niche: string,
@@ -75,7 +89,9 @@ export class GrokLipSyncAutoWorkflow {
     platforms: Platform[],
     backgroundMood: BackgroundMood,
     duration: number,
-    progressCallback?: (status: string, step: string, progress: number) => void
+    progressCallback?: (status: string, step: string, progress: number) => void,
+    replaceVoice: boolean = false,
+    voiceId?: string
   ): Promise<VideoGenerationResult> {
     const jobId = uuidv4();
     const state: WorkflowState = {
@@ -99,6 +115,7 @@ export class GrokLipSyncAutoWorkflow {
       console.log(`🎨 Background Mood: ${backgroundMood}`);
       console.log(`⏱️  Target Duration: ${duration}s`);
       console.log(`🎯 Platforms: ${platforms.join(', ')}`);
+      console.log(`🔊 Voice: ${replaceVoice ? `ElevenLabs (${voiceId || 'default'})` : 'Grok Native'}`);
       console.log('');
 
       // Create job directories
@@ -183,10 +200,31 @@ export class GrokLipSyncAutoWorkflow {
       console.log('');
 
       // ========================================
-      // STEP 4: Add Captions
+      // STEP 4: Optional Voice Replacement (Per-Segment Time-Matched)
       // ========================================
       let finalVideoPath = assembledVideoPath;
 
+      if (replaceVoice && this.elevenlabs) {
+        state.status = 'replacing_voice';
+        state.currentStep = 'Replacing voice with ElevenLabs (time-matched)';
+        state.progress = 75;
+        this.logProgress(state);
+
+        finalVideoPath = await this.replaceVoiceWithElevenLabs(
+          assembledVideoPath,
+          scenes,
+          segmentPaths,
+          audioDir,
+          finalDir
+        );
+
+        console.log('✓ Voice replaced with ElevenLabs (time-matched per segment)');
+        console.log('');
+      }
+
+      // ========================================
+      // STEP 5: Add Captions
+      // ========================================
       state.status = 'adding_captions';
       state.currentStep = 'Adding captions';
       state.progress = 85;
@@ -194,11 +232,11 @@ export class GrokLipSyncAutoWorkflow {
 
       try {
         const audioForCaptions = path.join(audioDir, 'for_captions.mp3');
-        await this.ffmpeg.extractAudio(assembledVideoPath, audioForCaptions);
+        await this.ffmpeg.extractAudio(finalVideoPath, audioForCaptions);
 
         const captionedVideoPath = path.join(finalDir, 'final_with_captions.mp4');
         await this.captions.addCaptionsWorkflow(
-          assembledVideoPath,
+          finalVideoPath,
           audioForCaptions,
           captionedVideoPath,
           YOUTUBE_SHORTS_STYLE
@@ -231,7 +269,7 @@ export class GrokLipSyncAutoWorkflow {
       console.log(`📁 Output: ${finalVideoPath}`);
       console.log(`🎬 Duration: ${finalDuration.toFixed(2)}s`);
       console.log(`🎯 Scenes: ${scenes.length}`);
-      console.log(`🔊 Audio: Grok Native Lip Sync`);
+      console.log(`🔊 Audio: ${replaceVoice ? 'ElevenLabs (time-matched)' : 'Grok Native Lip Sync'}`);
       console.log('');
 
       return {
@@ -279,7 +317,7 @@ export class GrokLipSyncAutoWorkflow {
     const prompt = `Generate a ${sceneCount}-scene video script for the topic: "${topic}" in the ${niche} niche.
 
 Each scene should have:
-1. DIALOGUE: What the speaker says (2-3 sentences, conversational, engaging)
+1. DIALOGUE: What the character says (2-3 sentences, conversational, engaging)
 2. VISUAL: Background description (${moodDescriptions[backgroundMood]})
 
 Format your response as JSON array:
@@ -287,7 +325,7 @@ Format your response as JSON array:
   {
     "id": "1",
     "title": "Scene Title",
-    "dialogue": "What the speaker says...",
+    "dialogue": "What the character says...",
     "visual": "Description of the background environment..."
   },
   ...
@@ -384,6 +422,11 @@ Return ONLY the JSON array, no other text.`;
         try {
           const compositedFramePath = path.join(imageDir, `transition_composite_${i}.jpg`);
 
+          console.log(`   🔄 FRAME CHAINING STEP 1: Extracting last frame and compositing...`);
+          console.log(`      Video URL: ${result.videoUrl}`);
+          console.log(`      Portrait: ${initialPortraitPath}`);
+          console.log(`      Output: ${compositedFramePath}`);
+
           await this.ffmpeg.extractLastFrameAndComposite(
             result.videoUrl,
             initialPortraitPath,
@@ -391,20 +434,32 @@ Return ONLY the JSON array, no other text.`;
           );
 
           if (!fs.existsSync(compositedFramePath)) {
-            throw new Error(`Composited frame not created`);
+            throw new Error(`Composited frame file not created at ${compositedFramePath}`);
           }
 
+          const frameStats = fs.statSync(compositedFramePath);
+          console.log(`   ✓ Composited frame created (${(frameStats.size / 1024).toFixed(1)}KB)`);
+
+          if (frameStats.size < 1000) {
+            console.warn(`   ⚠️  Warning: Composited frame is very small (${frameStats.size} bytes) - may be blank`);
+          }
+
+          console.log(`   🔄 FRAME CHAINING STEP 2: Uploading to GCS...`);
           const timestamp = Date.now();
           const remoteFileName = `lipsync_auto_composite_${timestamp}_segment_${i}.jpg`;
           const gcsUrl = await this.gcsStorage.uploadImage(compositedFramePath, remoteFileName);
+          console.log(`   ✓ Uploaded to GCS: ${gcsUrl}`);
 
-          console.log(`   ↳ Waiting 4s for GCS propagation...`);
+          console.log(`   🔄 FRAME CHAINING STEP 3: Waiting for GCS propagation...`);
           await new Promise(resolve => setTimeout(resolve, 4000));
 
           currentSeedPath = gcsUrl;
-          console.log(`   ✅ Frame chain ready for segment ${i + 2}`);
+          console.log(`   ✅ Frame chain READY for segment ${i + 2}: ${gcsUrl.substring(0, 80)}...`);
         } catch (error: any) {
-          console.error(`   ❌ Frame chaining failed: ${error.message}`);
+          console.error(`   ❌ FRAME CHAINING FAILED`);
+          console.error(`      Error: ${error.message}`);
+          console.error(`      Stack: ${error.stack}`);
+          console.warn(`   ⚠️  Falling back to initial portrait for segment ${i + 2}`);
           currentSeedPath = initialPortraitPath;
         }
       }
@@ -443,5 +498,103 @@ Return ONLY the JSON array, no other text.`;
     const filled = Math.floor((progress / 100) * width);
     const empty = width - filled;
     return '█'.repeat(filled) + '░'.repeat(empty);
+  }
+
+  /**
+   * Replace Grok's native voice with ElevenLabs (Speech-to-Speech)
+   *
+   * This uses Speech-to-Speech API for accurate timing:
+   * 1. Extract audio from each video segment (Grok's voice)
+   * 2. Convert to target voice using Speech-to-Speech (preserves timing!)
+   * 3. Replace audio in each segment (no stretching needed)
+   * 4. Concatenate all voice-replaced segments
+   *
+   * Speech-to-Speech is better than TTS + time-stretch because:
+   * - Preserves natural speech pacing from Grok
+   * - No artificial speed-up/slow-down artifacts
+   * - Better lip-sync accuracy
+   */
+  private async replaceVoiceWithElevenLabs(
+    assembledVideoPath: string,
+    scenes: GeneratedScene[],
+    videoSegmentPaths: string[],
+    audioDir: string,
+    finalDir: string
+  ): Promise<string> {
+    if (!this.elevenlabs) {
+      console.warn('   ⚠️  ElevenLabs not configured, skipping voice replacement');
+      return assembledVideoPath;
+    }
+
+    console.log('');
+    console.log('🎤 VOICE REPLACEMENT (Speech-to-Speech)');
+    console.log('   Converting Grok voice to ElevenLabs using Speech-to-Speech...');
+    console.log(`   Processing ${videoSegmentPaths.length} segments...`);
+    console.log('   (Speech-to-Speech preserves original timing - no stretching!)');
+    console.log('');
+
+    const voiceReplacedSegments: string[] = [];
+
+    for (let i = 0; i < videoSegmentPaths.length; i++) {
+      const segmentPath = videoSegmentPaths[i];
+      const scene = scenes[i];
+
+      console.log(`   📹 Segment ${i + 1}/${videoSegmentPaths.length}${scene ? `: "${scene.dialogue.substring(0, 40)}..."` : ''}`);
+
+      try {
+        // Step 1: Get original video duration for comparison
+        const videoDuration = await this.ffmpeg.getDuration(segmentPath);
+        console.log(`      Original duration: ${videoDuration.toFixed(2)}s`);
+
+        // Step 2: Use Speech-to-Speech to convert Grok's voice to target voice
+        // This extracts audio, converts it, and returns the path
+        const { audioPath: convertedAudioPath, duration: convertedDuration } =
+          await this.elevenlabs.convertVideoAudioToVoice(
+            segmentPath,
+            audioDir,
+            i
+          );
+
+        console.log(`      Converted duration: ${convertedDuration.toFixed(2)}s (should match original)`);
+
+        // Step 3: Replace audio in video (no stretching needed - timing is preserved!)
+        const voiceReplacedPath = path.join(audioDir, `segment_${i}_voice_replaced.mp4`);
+        await this.ffmpeg.replaceAudioTrack(
+          segmentPath,
+          convertedAudioPath,
+          voiceReplacedPath
+        );
+
+        voiceReplacedSegments.push(voiceReplacedPath);
+        console.log(`      ✓ Segment ${i + 1} voice converted via Speech-to-Speech`);
+        console.log('');
+
+        // Cleanup converted audio file
+        if (fs.existsSync(convertedAudioPath)) {
+          fs.unlinkSync(convertedAudioPath);
+        }
+
+      } catch (error) {
+        console.error(`      ❌ Failed to convert voice in segment ${i + 1}: ${error}`);
+        // Fall back to original segment if voice replacement fails
+        voiceReplacedSegments.push(segmentPath);
+      }
+    }
+
+    // Step 4: Concatenate all voice-replaced segments
+    console.log('   🔗 Concatenating voice-replaced segments...');
+    const finalVoiceReplacedPath = path.join(finalDir, 'with_elevenlabs_voice.mp4');
+
+    const assembled = await this.ffmpeg.concatenateWithAudio(
+      voiceReplacedSegments,
+      finalVoiceReplacedPath,
+      true // Apply smooth transitions
+    );
+
+    console.log('');
+    console.log('   ✓ Voice replacement complete (Speech-to-Speech)');
+    console.log(`   Final duration: ${assembled.duration.toFixed(2)}s`);
+
+    return finalVoiceReplacedPath;
   }
 }

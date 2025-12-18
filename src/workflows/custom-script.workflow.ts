@@ -353,10 +353,12 @@ export class CustomScriptWorkflow {
    * Uses the format that worked well: "Keep original motion and lip movement..."
    */
   private buildLipSyncPrompt(scene: CustomScene): string {
+    const dialogue = scene.voiceover || '';
     const background = scene.visual || 'professional office setting with soft natural lighting';
 
-    // Use the lip-sync friendly format that worked well
-    return `Keep original motion and lip movement. Leave speaker unchanged. Modify background only.
+    // Format: Line + lip sync instruction + Background
+    return `Line: "${dialogue}"
+Speak this line with natural lip sync and mouth movement.
 
 Background: ${background}, cinematic 4K quality.`;
   }

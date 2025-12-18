@@ -292,7 +292,7 @@ export class KieService {
 
     // If still too long or empty, use a reasonable default
     if (!enhanced || enhanced.length < 10) {
-      enhanced = "Person speaking with natural expressions and subtle movements";
+      enhanced = "Character speaking with natural expressions and engaging movement";
     }
 
     // Add final period if missing

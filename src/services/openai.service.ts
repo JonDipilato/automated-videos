@@ -120,6 +120,15 @@ CUSTOM NICHE:
 - Adapt your approach to maximize engagement for this specific content
 - Be creative and flexible - find the unique angle that makes this topic compelling
 - Focus on what will resonate most with the target audience for this topic`;
+    } else if (niche === 'hyper-realistic') {
+      nicheGuidance = `
+HYPER-REALISTIC NICHE:
+- Focus on photorealistic, believable content that could pass as real footage
+- Use natural, conversational language that sounds like genuine human speech
+- Describe scenes with real-world accuracy and authentic details
+- Avoid anything fantastical or obviously CGI - aim for documentary-style realism
+- Ground everything in reality: real locations, natural lighting, authentic emotions
+- The goal is to make AI-generated content indistinguishable from real video`;
     }
 
     const systemPrompt = `You are a senior YouTube Shorts script editor who writes tight, high-value narratives.
@@ -332,7 +341,7 @@ Format as JSON with fields: script, storyOutline, keyPoints (array), tone, estim
     if (segmentCount <= 1) {
       return [{
         segmentIndex: 0,
-        videoPrompt: `Keep original motion and lip movement. Leave speaker unchanged. Modify background only. Background: Professional studio with soft lighting, suitable for ${scriptGeneration.tone} content. ${scriptGeneration.keyPoints.join(', ')}. Cinematic 4K quality.`,
+        videoPrompt: `Keep original motion and lip movement. Leave character unchanged. Modify background only. Background: Professional studio with soft lighting, suitable for ${scriptGeneration.tone} content. ${scriptGeneration.keyPoints.join(', ')}. Cinematic 4K quality.`,
         backgroundPrompt: `Professional studio setup with soft lighting and depth, suitable for ${scriptGeneration.tone} content`,
         transitionType: 'crossfade' as const,
         duration: segmentDuration,
@@ -354,6 +363,19 @@ Format as JSON with fields: script, storyOutline, keyPoints (array), tone, estim
 - COLOR PALETTE: Intense oranges/reds for fire attacks, electric blues for energy, deep purples for dark power, golden yellow for ultimate forms, contrasting warm vs cool for opposing forces
 - VISUAL INTENSITY: Screen-filling energy blasts, ground-shattering impacts, atmospheric debris and particles, dramatic lens flares from power sources, dust and smoke from destruction
 - EMOTIONAL ENERGY: Raw power, unstoppable force, legendary warrior spirit, climactic showdown tension, overwhelming intensity`;
+    } else if (niche === 'hyper-realistic') {
+      nicheVisualStyle = `
+
+📷 HYPER-REALISTIC VISUAL STYLE (CRITICAL - APPLY TO ALL PROMPTS):
+- PHOTOREALISM: RAW camera footage quality, natural film grain, authentic lens characteristics, no CGI artifacts
+- NATURAL LIGHTING: Soft daylight, realistic shadows, natural skin tones, ambient occlusion, no artificial glow effects
+- REAL-WORLD ENVIRONMENTS: Actual locations (offices, streets, homes, cafes), authentic textures, weathered surfaces, lived-in spaces
+- HUMAN AUTHENTICITY: Natural micro-expressions, realistic skin pores and imperfections, authentic eye movement, natural blinking
+- CAMERA BEHAVIOR: Handheld slight movement, natural focus pulls, documentary-style framing, no impossible camera angles
+- COLOR GRADING: Natural color palette, no oversaturation, realistic skin tones, subtle contrast, film-like quality
+- CLOTHING & DETAILS: Real fabric textures, natural wrinkles, authentic accessories, no perfect/artificial appearance
+- ENVIRONMENTAL DETAILS: Dust particles in light beams, natural reflections, realistic depth of field, atmospheric haze
+- GOAL: Make this indistinguishable from real iPhone/DSLR footage of a real person`;
     }
 
     let systemPrompt = `You are an elite cinematographer and visual storytelling expert for Grok's video generation AI.
@@ -371,11 +393,12 @@ CRITICAL: Every scene must flow naturally with NO teleporting or logic breaks.
 - EMOTIONAL IMPACT: Powerful poses amidst futuristic tech, confident expressions with holographic reflections, commanding presence in high-tech spaces${nicheVisualStyle}
 
 🎤 LIP SYNC VIDEO FORMAT (CRITICAL):
-All prompts MUST use this exact format to preserve lip sync and speaker motion:
-- Start with: "Keep original motion and lip movement. Leave speaker unchanged. Modify background only."
+All prompts MUST use this exact format to preserve lip sync and character motion:
+- Start with: "Keep original motion and lip movement. Leave character unchanged. Modify background only."
 - Then describe ONLY the background/environment changes
-- The speaker's face, expressions, and lip movements are automatically synced with audio
-- Focus on BACKGROUND transformations while keeping the speaker intact`;
+- The character's face, expressions, and lip movements are automatically synced with audio
+- Focus on BACKGROUND transformations while keeping the character intact
+- Allow natural engaging movement (walking, gesturing, turning) - the character should feel alive and dynamic`;
 
     // Use original full script for prompt generation (not truncated version)
     const scriptForPrompts = scriptGeneration.originalScript || scriptGeneration.script;
@@ -399,17 +422,41 @@ All prompts MUST use this exact format to preserve lip sync and speaker motion:
 - Each segment should escalate in intensity toward a climactic moment
 
 EPIC BATTLES CONTINUITY PATTERN:
-Segment 1: Warrior standing in destroyed battlefield, power aura flickering to life, camera slowly rising
-Segment 2: Energy gathering around warrior, debris floating upward, lightning crackling in background
-Segment 3: Explosive power-up sequence, ground shattering, camera orbiting rapidly around glowing figure
+Segment 1: Character standing in destroyed battlefield, power aura flickering to life, camera slowly rising (dynamic movement allowed)
+Segment 2: Energy gathering around character, debris floating upward, lightning crackling in background
+Segment 3: Explosive power-up sequence, ground shattering, camera orbiting rapidly around glowing figure (natural motion)
 Segment 4: Mid-combat pose, energy blast firing, shockwave rippling outward, slow-motion debris
 Segment 5: Aerial combat moment, afterimage trails, clashing energy beams lighting up the scene
 Segment 6: Landing impact creating crater, dust explosion, camera at ground level looking up
 Segment 7: Victory pose with full power aura, defeated enemies in background, epic backlighting
-Segment 8: Close-up of warrior's face, determined expression, power fading to calm, camera slowly pulling back
+Segment 8: Close-up of character's face, determined expression, power fading to calm, camera slowly pulling back
 
 EXAMPLE EPIC BATTLES VIDEO PROMPT:
-"Keep original motion and lip movement. Leave speaker unchanged. Modify background only. Background: EXPLOSIVE volcanic battlefield with crackling golden energy auras, ground shattering into floating debris. Lightning strikes illuminate the arena while afterimage trails show incredible speed. Fiery oranges and electric blues clash in massive explosions. Slow-motion particles and embers swirl through the air. Camera dramatically reveals the scale of destruction with epic backlighting from volcanic eruptions. Cinematic 4K quality with intense battle atmosphere."`;
+"Keep original motion and lip movement. Leave character unchanged. Modify background only. Background: EXPLOSIVE volcanic battlefield with crackling golden energy auras, ground shattering into floating debris. Lightning strikes illuminate the arena while afterimage trails show incredible speed. Fiery oranges and electric blues clash in massive explosions. Slow-motion particles and embers swirl through the air. Camera dramatically reveals the scale of destruction with epic backlighting from volcanic eruptions. The character moves dynamically and engages with the scene. Cinematic 4K quality with intense battle atmosphere."`;
+    } else if (niche === 'hyper-realistic') {
+      nicheUserPromptAddition = `
+
+📷 HYPER-REALISTIC SPECIFIC REQUIREMENTS:
+- Every scene must look like REAL FOOTAGE shot on an iPhone or professional camera
+- Use ONLY real-world locations: living rooms, offices, coffee shops, streets, parks
+- Lighting must be NATURAL: soft daylight, window light, realistic indoor lighting
+- NO neon, NO holographics, NO sci-fi effects - pure photorealism
+- Camera should behave like a real handheld camera: slight movement, natural focus
+- Color grading should be natural and film-like, not oversaturated
+- The character should look like a real person in a real place
+
+HYPER-REALISTIC CONTINUITY PATTERN:
+Segment 1: Medium close-up of character in a naturally lit room, soft window light, authentic environment
+Segment 2: Slightly wider shot showing more of the real environment, natural background activity
+Segment 3: Character in motion, walking through a realistic space, handheld camera feel
+Segment 4: Different angle of the same space, maintaining environmental consistency
+Segment 5: Close-up with shallow depth of field, realistic bokeh from practical lights
+Segment 6: Character interacting with real objects, authentic textures visible
+Segment 7: Return to medium shot, consistent lighting and environment
+Segment 8: Final close-up, natural expression, realistic skin detail, soft focus background
+
+EXAMPLE HYPER-REALISTIC VIDEO PROMPT:
+"Keep original motion and lip movement. Leave character unchanged. Modify background only. Background: Cozy modern living room with soft natural daylight streaming through large windows. Beige linen couch with subtle wrinkles, wooden coffee table with authentic scratches, potted plants with realistic leaves. Gentle dust particles visible in the light beams. Warm natural color palette, no filters. Slight handheld camera movement. Shallow depth of field with realistic bokeh. Shot on iPhone 15 Pro quality, indistinguishable from real footage."`;
     }
 
     const userPrompt = `Based on this script and story, create ${segmentCount} unique visual prompts for Grok Imagine with PERFECT CONTINUITY.
@@ -427,28 +474,30 @@ CRITICAL CONTINUITY RULES:
 4. Scene transitions must be natural and motivated
 
 CONTINUITY PATTERN EXAMPLE:
-Segment 1: Close-up of speaker's face (portrait) delivering hook
-Segment 2: Wide shot of speaker standing on cliff edge, wind in hair
-Segment 3: Camera follows speaker walking down path from cliff
-Segment 4: Speaker approaching car in parking lot
-Segment 5: Interior shot of speaker driving, looking determined
-Segment 6: Speaker parking car, getting out
-Segment 7: Speaker entering workspace/office
-Segment 8: Close-up of speaker's face as they sit down, concluding thought
+Segment 1: Close-up of character's face (portrait) delivering hook
+Segment 2: Wide shot of character standing on cliff edge, wind in hair, natural movement
+Segment 3: Camera follows character walking down path from cliff (engaging motion)
+Segment 4: Character approaching destination, gesturing naturally
+Segment 5: Interior shot of character in motion, looking determined
+Segment 6: Character arriving at new location, dynamic movement
+Segment 7: Character entering workspace, walking with purpose
+Segment 8: Close-up of character's face as they conclude, natural expressions
 
 KEY: Each scene MUST connect to the previous one. No sudden location jumps without showing the transition.
 
 🎤 MANDATORY: LIP SYNC VIDEO FORMAT
 Every video prompt MUST use this exact format to enable automatic lip sync:
-- FIRST LINE MUST BE: "Keep original motion and lip movement. Leave speaker unchanged. Modify background only."
-- Then describe ONLY the background/environment - the speaker is automatically preserved with lip sync
+- FIRST LINE MUST BE: "Keep original motion and lip movement. Leave character unchanged. Modify background only."
+- Then describe ONLY the background/environment - the character is automatically preserved with lip sync
 - Focus on BACKGROUND changes: lighting, environment, effects, atmosphere
-- The AI will automatically sync the speaker's lips to the audio
+- The AI will automatically sync the character's lips/mouth to the audio
+- Allow natural engaging movement - the character can walk, gesture, turn, and feel alive
 
 For EACH segment, provide:
 1. videoPrompt: EXPLOSIVE, DYNAMIC, FUTURISTIC cinematic prompt for ${segmentDuration} seconds of THRILLING footage
-   - FIRST LINE MUST BE: "Keep original motion and lip movement. Leave speaker unchanged. Modify background only."
+   - FIRST LINE MUST BE: "Keep original motion and lip movement. Leave character unchanged. Modify background only."
    - Then describe the BACKGROUND in 3-4 sentences: environment, lighting, effects, atmosphere
+   - IMPORTANT: Allow natural engaging movement - the character can walk, gesture, turn, and feel alive (not frozen/static)
    - MANDATORY MOTION: Every background MUST have constant movement - camera motion, environmental motion, lighting effects
    - CAMERA MOVEMENTS (use multiple): Smooth push-ins, pull-outs, orbiting circles, rising cranes, gliding sliders, whip pans, dramatic reveals
    - SPEED & PACING: Fast cuts between angles, quick dynamic movements, energetic transitions, never static
@@ -459,7 +508,7 @@ For EACH segment, provide:
    - ATMOSPHERE: Powerful, futuristic, inspiring, tech-forward, commanding presence, next-level confidence
    - COLOR GRADING: Vibrant cyberpunk palette (teal/magenta, purple/orange, electric blue/hot pink), high contrast neon vs deep shadows, cinematic sci-fi aesthetic
    - CONTINUITY: Background MUST connect logically to previous scene with natural spatial progression
-   - Example: "Keep original motion and lip movement. Leave speaker unchanged. Modify background only. Background: Futuristic AI command center with floating holographic displays showing neural network visualizations. Camera rapidly orbits as neon cyan and magenta lights pulse rhythmically. Volumetric laser beams cut through atmospheric haze while glowing data particles swirl. Massive curved display wall shows real-time AI processing visuals. Electric blue rim lighting against purple-tinged darkness. Holographic interfaces materialize with cyberpunk color grading and bokeh from hundreds of tiny LED indicators. Cinematic 4K quality."
+   - Example: "Keep original motion and lip movement. Leave character unchanged. Modify background only. Background: Futuristic AI command center with floating holographic displays showing neural network visualizations. Camera rapidly orbits as neon cyan and magenta lights pulse rhythmically. Volumetric laser beams cut through atmospheric haze while glowing data particles swirl. Massive curved display wall shows real-time AI processing visuals. Electric blue rim lighting against purple-tinged darkness. Holographic interfaces materialize with cyberpunk color grading and bokeh from hundreds of tiny LED indicators. The character moves naturally and engages dynamically. Cinematic 4K quality."
 
 2. backgroundPrompt: High-quality background image prompt
    - Cinematic, professional composition

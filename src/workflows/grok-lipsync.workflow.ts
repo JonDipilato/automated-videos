@@ -17,7 +17,7 @@ import { CaptionsService, YOUTUBE_SHORTS_STYLE } from '../services/captions.serv
  */
 export interface LipSyncScene {
   id: string;
-  dialogue: string;     // What the person says (Line: "...")
+  dialogue: string;     // What the character says (Line: "...")
   visual: string;       // Background description
   title?: string;       // Optional scene title
   timestamp?: string;   // Optional timestamp reference
@@ -181,22 +181,25 @@ export class GrokLipSyncWorkflow {
       console.log('');
 
       // ========================================
-      // STEP 4: Optional voice replacement
+      // STEP 4: Optional voice replacement (Per-Segment Time-Matched)
       // ========================================
       let finalVideoPath = assembledVideoPath;
 
       if (options.replaceVoice && options.voiceId) {
         state.status = 'replacing_voice';
-        state.currentStep = 'Replacing voice with ElevenLabs';
+        state.currentStep = 'Replacing voice with ElevenLabs (time-matched)';
         state.progress = 70;
         this.logProgress(state);
 
+        // Pass individual segment paths for per-segment time-matched voice replacement
+        // This ensures each segment's ElevenLabs audio is stretched to match its lip movements
         finalVideoPath = await this.replaceVoiceWithElevenLabs(
           assembledVideoPath,
           scenes,
           audioDir,
           finalDir,
-          options.voiceId
+          options.voiceId,
+          segmentPaths // Pass the original segment paths for per-segment processing
         );
       }
 
@@ -399,41 +402,150 @@ export class GrokLipSyncWorkflow {
   }
 
   /**
-   * Replace Grok's native voice with ElevenLabs
-   * Used when user wants custom/cloned voice instead of Grok AI voice
+   * Replace Grok's native voice with ElevenLabs (Speech-to-Speech)
+   *
+   * This uses Speech-to-Speech API for accurate timing:
+   * 1. Extract audio from each video segment (Grok's voice)
+   * 2. Convert to target voice using Speech-to-Speech (preserves timing!)
+   * 3. Replace audio in each segment (no stretching needed)
+   * 4. Concatenate all voice-replaced segments
+   *
+   * Speech-to-Speech is better than TTS + time-stretch because:
+   * - Preserves natural speech pacing from Grok
+   * - No artificial speed-up/slow-down artifacts
+   * - Better lip-sync accuracy
    */
   private async replaceVoiceWithElevenLabs(
     videoPath: string,
     scenes: LipSyncScene[],
     audioDir: string,
     finalDir: string,
-    voiceId: string
+    voiceId: string,
+    videoSegmentPaths?: string[]
   ): Promise<string> {
     console.log('');
-    console.log('🎤 VOICE REPLACEMENT');
-    console.log('   Replacing Grok native voice with ElevenLabs...');
+    console.log('🎤 VOICE REPLACEMENT (Speech-to-Speech)');
+    console.log('   Converting Grok voice to ElevenLabs using Speech-to-Speech...');
+    console.log('   (Speech-to-Speech preserves original timing - no stretching!)');
 
-    // Step 1: Combine all dialogues into full script
+    // If we don't have individual segments, fall back to simple replacement
+    if (!videoSegmentPaths || videoSegmentPaths.length === 0) {
+      console.log('   ⚠️  No individual segments available, using simple replacement');
+      return this.simpleVoiceReplacement(videoPath, scenes, audioDir, finalDir);
+    }
+
+    console.log(`   Processing ${videoSegmentPaths.length} segments...`);
+    console.log('');
+
+    const voiceReplacedSegments: string[] = [];
+
+    for (let i = 0; i < videoSegmentPaths.length; i++) {
+      const segmentPath = videoSegmentPaths[i];
+      const scene = scenes[i];
+
+      console.log(`   📹 Segment ${i + 1}/${videoSegmentPaths.length}${scene ? `: "${scene.dialogue.substring(0, 40)}..."` : ''}`);
+
+      try {
+        // Step 1: Get original video duration for comparison
+        const videoDuration = await this.ffmpeg.getDuration(segmentPath);
+        console.log(`      Original duration: ${videoDuration.toFixed(2)}s`);
+
+        // Step 2: Use Speech-to-Speech to convert Grok's voice to target voice
+        const { audioPath: convertedAudioPath, duration: convertedDuration } =
+          await this.elevenlabs.convertVideoAudioToVoice(
+            segmentPath,
+            audioDir,
+            i
+          );
+
+        console.log(`      Converted duration: ${convertedDuration.toFixed(2)}s (should match original)`);
+
+        // Step 3: Replace audio in video (no stretching needed - timing is preserved!)
+        const voiceReplacedPath = path.join(audioDir, `segment_${i}_voice_replaced.mp4`);
+        await this.ffmpeg.replaceAudioTrack(
+          segmentPath,
+          convertedAudioPath,
+          voiceReplacedPath
+        );
+
+        voiceReplacedSegments.push(voiceReplacedPath);
+        console.log(`      ✓ Segment ${i + 1} voice converted via Speech-to-Speech`);
+        console.log('');
+
+        // Cleanup converted audio file
+        if (fs.existsSync(convertedAudioPath)) {
+          fs.unlinkSync(convertedAudioPath);
+        }
+
+      } catch (error) {
+        console.error(`      ❌ Failed to convert voice in segment ${i + 1}: ${error}`);
+        // Fall back to original segment if voice replacement fails
+        voiceReplacedSegments.push(segmentPath);
+      }
+    }
+
+    // Step 4: Concatenate all voice-replaced segments
+    console.log('   🔗 Concatenating voice-replaced segments...');
+    const finalVoiceReplacedPath = path.join(finalDir, 'with_elevenlabs_voice.mp4');
+
+    const assembled = await this.ffmpeg.concatenateWithAudio(
+      voiceReplacedSegments,
+      finalVoiceReplacedPath,
+      true // Apply smooth transitions
+    );
+
+    console.log('');
+    console.log('   ✓ Voice replacement complete (Speech-to-Speech)');
+    console.log(`   Final duration: ${assembled.duration.toFixed(2)}s`);
+
+    return finalVoiceReplacedPath;
+  }
+
+  /**
+   * Simple voice replacement (fallback when individual segments aren't available)
+   * This method doesn't do per-segment time matching
+   */
+  private async simpleVoiceReplacement(
+    videoPath: string,
+    scenes: LipSyncScene[],
+    audioDir: string,
+    finalDir: string
+  ): Promise<string> {
+    // Combine all dialogues into full script
     const fullScript = scenes.map(s => s.dialogue).join(' ');
     console.log(`   Script length: ${fullScript.split(/\s+/).length} words`);
 
-    // Step 2: Generate ElevenLabs audio
-    const elevenLabsAudioPath = path.join(audioDir, 'elevenlabs_voice.mp3');
+    // Get video duration for reference
+    const videoDuration = await this.ffmpeg.getDuration(videoPath);
 
-    // Use ElevenLabs service (same as existing workflow)
-    // Note: voiceId is set in the constructor, not passed to generateAudio
+    // Generate ElevenLabs audio
+    const elevenLabsAudioPath = path.join(audioDir, 'elevenlabs_voice.mp3');
     console.log(`   Generating ElevenLabs audio...`);
     await this.elevenlabs.generateAudio(
       fullScript,
       elevenLabsAudioPath,
-      5 // segment duration for estimation
+      videoDuration
     );
 
-    // Step 3: Replace audio in video
-    const voiceReplacedPath = path.join(finalDir, 'with_elevenlabs_voice.mp4');
-    await this.ffmpeg.replaceAudioTrack(videoPath, elevenLabsAudioPath, voiceReplacedPath);
+    // Time-stretch the entire audio to match video duration
+    const audioDuration = await this.ffmpeg.getDuration(elevenLabsAudioPath);
+    let audioToUse = elevenLabsAudioPath;
 
-    console.log('   ✓ Voice replaced with ElevenLabs');
+    if (Math.abs(videoDuration - audioDuration) > 0.5) {
+      console.log(`   Time-stretching audio to match video...`);
+      const stretchedAudioPath = path.join(audioDir, 'elevenlabs_voice_stretched.mp3');
+      audioToUse = await this.ffmpeg.timeStretchAudio(
+        elevenLabsAudioPath,
+        stretchedAudioPath,
+        videoDuration
+      );
+    }
+
+    // Replace audio in video
+    const voiceReplacedPath = path.join(finalDir, 'with_elevenlabs_voice.mp4');
+    await this.ffmpeg.replaceAudioTrack(videoPath, audioToUse, voiceReplacedPath);
+
+    console.log('   ✓ Voice replaced with ElevenLabs (simple mode with time-stretch)');
 
     return voiceReplacedPath;
   }

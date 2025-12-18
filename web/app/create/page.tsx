@@ -79,6 +79,8 @@ export default function CreatePage() {
     duration: "45",
     platforms: ["youtube", "tiktok"],
     backgroundMood: "dramatic" as BackgroundMood,
+    replaceVoice: false,
+    voiceId: "default",
   });
 
   // Custom script state
@@ -136,7 +138,16 @@ export default function CreatePage() {
             body: portraitFormData
           });
           const portraitData = await portraitRes.json();
-          portraitPath = portraitData.filepath;
+
+          if (portraitRes.ok && portraitData.filepath) {
+            portraitPath = portraitData.filepath;
+            console.log("✓ Portrait uploaded successfully:", portraitPath);
+          } else {
+            const errorDetail = portraitData.details ? `\n\nDetails: ${portraitData.details}` : "";
+            console.error("Portrait upload failed:", portraitData.error, portraitData.details);
+            alert("Portrait upload failed: " + (portraitData.error || "Unknown error") + errorDetail);
+            return;
+          }
         }
 
         // Start video generation
@@ -170,7 +181,16 @@ export default function CreatePage() {
             body: portraitFormData
           });
           const portraitData = await portraitRes.json();
-          portraitPath = portraitData.filepath;
+
+          if (portraitRes.ok && portraitData.filepath) {
+            portraitPath = portraitData.filepath;
+            console.log("✓ Portrait uploaded successfully:", portraitPath);
+          } else {
+            const errorDetail = portraitData.details ? `\n\nDetails: ${portraitData.details}` : "";
+            console.error("Portrait upload failed:", portraitData.error, portraitData.details);
+            alert("Portrait upload failed: " + (portraitData.error || "Unknown error") + errorDetail);
+            return;
+          }
         }
 
         // Route to correct API based on generation mode
@@ -240,7 +260,16 @@ export default function CreatePage() {
             body: portraitFormData
           });
           const portraitData = await portraitRes.json();
-          portraitPath = portraitData.filepath;
+
+          if (portraitRes.ok && portraitData.filepath) {
+            portraitPath = portraitData.filepath;
+            console.log("✓ Portrait uploaded successfully:", portraitPath);
+          } else {
+            const errorDetail = portraitData.details ? `\n\nDetails: ${portraitData.details}` : "";
+            console.error("Portrait upload failed:", portraitData.error, portraitData.details);
+            alert("Portrait upload failed: " + (portraitData.error || "Unknown error") + errorDetail);
+            return;
+          }
         }
 
         // Start automatic lip sync generation
@@ -254,6 +283,8 @@ export default function CreatePage() {
             duration: parseInt(lipSyncFormData.duration),
             platforms: lipSyncFormData.platforms,
             backgroundMood: lipSyncFormData.backgroundMood,
+            replaceVoice: lipSyncFormData.replaceVoice,
+            voiceId: lipSyncFormData.replaceVoice && lipSyncFormData.voiceId !== "default" ? lipSyncFormData.voiceId : null,
           })
         });
 
@@ -456,6 +487,7 @@ export default function CreatePage() {
                   { value: "gaming", emoji: "🎮", label: "Gaming", gradient: "from-violet-500 to-purple-500" },
                   { value: "faith", emoji: "✨", label: "Faith", gradient: "from-amber-500 to-yellow-500" },
                   { value: "epic-battles", emoji: "⚔️", label: "Epic Battles", gradient: "from-red-600 to-yellow-500" },
+                  { value: "hyper-realistic", emoji: "📷", label: "Hyper-Realistic", gradient: "from-gray-600 to-slate-500" },
                   { value: "custom", emoji: "🎨", label: "Custom", gradient: "from-indigo-500 to-purple-600" },
                 ].map((niche) => (
                   <button
@@ -1063,6 +1095,7 @@ export default function CreatePage() {
                     { value: "gaming", emoji: "🎮", label: "Gaming", gradient: "from-violet-500 to-purple-500" },
                     { value: "faith", emoji: "✨", label: "Faith", gradient: "from-amber-500 to-yellow-500" },
                     { value: "epic-battles", emoji: "⚔️", label: "Epic Battles", gradient: "from-red-600 to-yellow-500" },
+                    { value: "hyper-realistic", emoji: "📷", label: "Hyper-Realistic", gradient: "from-gray-600 to-slate-500" },
                     { value: "custom", emoji: "🎨", label: "Custom", gradient: "from-indigo-500 to-purple-600" },
                   ].map((niche) => (
                     <button
@@ -1232,6 +1265,83 @@ export default function CreatePage() {
                   ))}
                 </div>
               </div>
+
+              {/* Voice Replacement Toggle - Replace Grok voice with ElevenLabs */}
+              <div className="bg-blue-500/10 border border-blue-400/30 rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl">🎤</span>
+                    <div>
+                      <div className="text-white font-medium">Replace Voice with ElevenLabs</div>
+                      <div className="text-blue-300 text-sm">Use a consistent cloned voice instead of Grok's native voice</div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setLipSyncFormData({ ...lipSyncFormData, replaceVoice: !lipSyncFormData.replaceVoice })}
+                    className={`relative w-14 h-8 rounded-full transition-all duration-200 ${
+                      lipSyncFormData.replaceVoice ? "bg-blue-500" : "bg-white/20"
+                    }`}
+                  >
+                    <div
+                      className={`absolute top-1 w-6 h-6 bg-white rounded-full transition-all duration-200 ${
+                        lipSyncFormData.replaceVoice ? "left-7" : "left-1"
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              {/* Voice Selection - Show when replaceVoice is enabled */}
+              {lipSyncFormData.replaceVoice && (
+                <div>
+                  <Label className="text-white text-lg font-semibold mb-3 block">Select Voice</Label>
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {VOICE_OPTIONS.filter((voice) => {
+                      if (voiceFilter === "all") return true;
+                      return voice.gender === voiceFilter;
+                    }).map((voice) => (
+                      <button
+                        key={voice.id}
+                        type="button"
+                        onClick={() => setLipSyncFormData({ ...lipSyncFormData, voiceId: voice.id })}
+                        className={`w-full text-left p-4 rounded-lg border-2 transition-all ${
+                          lipSyncFormData.voiceId === voice.id
+                            ? "border-blue-400 bg-blue-500/20 shadow-lg"
+                            : "border-white/20 bg-white/5 hover:bg-white/10 hover:border-white/40"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl">{voice.icon}</span>
+                          <div className="flex-1">
+                            <div className="text-white font-medium">{voice.name}</div>
+                            <div className="text-purple-300 text-sm">{voice.description}</div>
+                          </div>
+                          {lipSyncFormData.voiceId === voice.id && (
+                            <span className="text-blue-400">✓</span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex gap-2 mt-4">
+                    {(["all", "female", "male"] as const).map((filter) => (
+                      <button
+                        key={filter}
+                        type="button"
+                        onClick={() => setVoiceFilter(filter)}
+                        className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                          voiceFilter === filter
+                            ? "bg-blue-500 text-white"
+                            : "bg-white/10 text-purple-300 hover:bg-white/20"
+                        }`}
+                      >
+                        {filter.charAt(0).toUpperCase() + filter.slice(1)} {filter !== "all" && "Voices"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Submit Button */}
               <Button

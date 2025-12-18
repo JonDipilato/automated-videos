@@ -883,6 +883,126 @@ export class FFmpegService {
   }
 
   /**
+   * Time-stretch audio to match a target duration
+   * Uses FFmpeg's atempo filter to speed up or slow down audio
+   *
+   * @param inputPath - Input audio file
+   * @param outputPath - Output time-stretched audio file
+   * @param targetDuration - Desired duration in seconds
+   * @returns Path to the time-stretched audio file
+   */
+  async timeStretchAudio(
+    inputPath: string,
+    outputPath: string,
+    targetDuration: number
+  ): Promise<string> {
+    try {
+      const currentDuration = await this.getVideoDuration(inputPath);
+
+      if (currentDuration <= 0 || targetDuration <= 0) {
+        throw new Error('Invalid duration values');
+      }
+
+      // Calculate tempo factor (how much to speed up/slow down)
+      // atempo > 1.0 = speed up, < 1.0 = slow down
+      const tempoFactor = currentDuration / targetDuration;
+
+      console.log(`  Time-stretching audio: ${currentDuration.toFixed(2)}s -> ${targetDuration.toFixed(2)}s (${tempoFactor.toFixed(3)}x)`);
+
+      // atempo filter has limits: 0.5 to 2.0
+      // For extreme changes, we need to chain multiple atempo filters
+      let atempoFilters = '';
+      let remainingFactor = tempoFactor;
+
+      if (tempoFactor >= 0.5 && tempoFactor <= 2.0) {
+        // Single filter is enough
+        atempoFilters = `atempo=${tempoFactor.toFixed(4)}`;
+      } else if (tempoFactor < 0.5) {
+        // Need to slow down a lot - chain multiple atempo filters
+        while (remainingFactor < 0.5) {
+          atempoFilters += 'atempo=0.5,';
+          remainingFactor = remainingFactor / 0.5;
+        }
+        atempoFilters += `atempo=${remainingFactor.toFixed(4)}`;
+      } else {
+        // Need to speed up a lot - chain multiple atempo filters
+        while (remainingFactor > 2.0) {
+          atempoFilters += 'atempo=2.0,';
+          remainingFactor = remainingFactor / 2.0;
+        }
+        atempoFilters += `atempo=${remainingFactor.toFixed(4)}`;
+      }
+
+      const command = `ffmpeg -i "${inputPath}" -filter:a "${atempoFilters}" -vn "${outputPath}" -y`;
+
+      execSync(command, { stdio: 'pipe' });
+
+      // Verify the output duration
+      const outputDuration = await this.getVideoDuration(outputPath);
+      const durationError = Math.abs(outputDuration - targetDuration);
+
+      if (durationError > 0.5) {
+        console.warn(`  ⚠️  Time-stretch accuracy: ${outputDuration.toFixed(2)}s (target: ${targetDuration.toFixed(2)}s, error: ${durationError.toFixed(2)}s)`);
+      } else {
+        console.log(`  ✓ Audio time-stretched: ${outputDuration.toFixed(2)}s`);
+      }
+
+      return outputPath;
+    } catch (error) {
+      console.error(`Failed to time-stretch audio:`, error);
+      throw new Error(`Audio time-stretching failed: ${error}`);
+    }
+  }
+
+  /**
+   * Replace audio in a video segment with time-matched ElevenLabs audio
+   * This method handles the complete audio replacement workflow for a single segment
+   *
+   * @param videoPath - Video segment with Grok audio
+   * @param newAudioPath - ElevenLabs generated audio
+   * @param outputPath - Output video with replaced audio
+   * @param matchTiming - If true, time-stretch audio to match video duration
+   */
+  async replaceAudioWithTimingMatch(
+    videoPath: string,
+    newAudioPath: string,
+    outputPath: string,
+    matchTiming: boolean = true
+  ): Promise<string> {
+    try {
+      const videoDuration = await this.getVideoDuration(videoPath);
+      const audioDuration = await this.getVideoDuration(newAudioPath);
+
+      console.log(`  Video: ${videoDuration.toFixed(2)}s, Audio: ${audioDuration.toFixed(2)}s`);
+
+      let audioToUse = newAudioPath;
+
+      if (matchTiming && Math.abs(videoDuration - audioDuration) > 0.3) {
+        // Time-stretch the audio to match video duration
+        const tempDir = path.dirname(outputPath);
+        const stretchedAudioPath = path.join(tempDir, `stretched_${path.basename(newAudioPath)}`);
+
+        audioToUse = await this.timeStretchAudio(newAudioPath, stretchedAudioPath, videoDuration);
+      }
+
+      // Replace audio track, trimming to video length
+      const command = `ffmpeg -i "${videoPath}" -i "${audioToUse}" -c:v copy -c:a aac -b:a 192k -map 0:v:0 -map 1:a:0 -t ${videoDuration} "${outputPath}" -y`;
+
+      execSync(command, { stdio: 'pipe' });
+
+      // Clean up stretched audio if created
+      if (audioToUse !== newAudioPath && fs.existsSync(audioToUse)) {
+        fs.unlinkSync(audioToUse);
+      }
+
+      return outputPath;
+    } catch (error) {
+      console.error(`Failed to replace audio with timing match:`, error);
+      throw new Error(`Audio replacement failed: ${error}`);
+    }
+  }
+
+  /**
    * Validates FFmpeg installation
    */
   static validateFFmpeg(): boolean {

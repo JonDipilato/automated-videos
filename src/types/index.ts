@@ -245,7 +245,7 @@ export interface WorkflowState {
  */
 export interface LipSyncScene {
   id: string;
-  dialogue: string;     // What the person says (becomes "Line: ..." in prompt)
+  dialogue: string;     // What the character says (becomes "Line: ..." in prompt)
   visual: string;       // Background description
   title?: string;       // Optional scene title
   timestamp?: string;   // Optional timestamp reference

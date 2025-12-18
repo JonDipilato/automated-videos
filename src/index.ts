@@ -102,7 +102,7 @@ async function runGeneration(args: string[], logger: Logger) {
       console.error('  npm start generate -- --portrait "./assets/portraits/me.jpg" --topic "5 AI Tips" --platforms youtube,tiktok,instagram --max-length 14');
       console.error('  npm start generate -- --portrait "./assets/portraits/goku.png" --topic "Goku vs Vegeta" --niche epic-battles --max-length 60');
       console.error('');
-      console.error('Available niches: ai-tech, business, fitness, personal-dev, education, content, cooking, real-estate, gaming, faith, epic-battles, custom');
+      console.error('Available niches: ai-tech, business, fitness, personal-dev, education, content, cooking, real-estate, gaming, faith, epic-battles, hyper-realistic, custom');
       process.exit(1);
     }
 

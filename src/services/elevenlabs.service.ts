@@ -354,4 +354,117 @@ export class ElevenLabsService {
       fs.copyFileSync(inputPath, outputPath);
     }
   }
+
+  /**
+   * Speech-to-Speech conversion - converts audio to target voice while preserving timing
+   *
+   * This is the preferred method for voice replacement in lip-sync videos because:
+   * 1. Preserves the original speech timing/pacing from Grok
+   * 2. No time-stretching needed - output matches input duration naturally
+   * 3. Better lip-sync accuracy since pacing is maintained
+   *
+   * @param inputAudioPath - Path to the source audio file (e.g., extracted from Grok video)
+   * @param outputPath - Path to save the converted audio
+   * @param voiceId - Optional voice ID override (uses default if not provided)
+   */
+  async speechToSpeech(
+    inputAudioPath: string,
+    outputPath: string,
+    voiceId?: string
+  ): Promise<{ audioPath: string; duration: number }> {
+    const FormData = require('form-data');
+
+    try {
+      const targetVoiceId = voiceId || this.voiceId;
+      console.log(`  🔄 Converting audio to voice: ${targetVoiceId}`);
+
+      // Read the input audio file
+      const audioBuffer = fs.readFileSync(inputAudioPath);
+
+      // Create form data for multipart upload
+      const formData = new FormData();
+      formData.append('audio', audioBuffer, {
+        filename: path.basename(inputAudioPath),
+        contentType: 'audio/mpeg',
+      });
+      formData.append('model_id', 'eleven_english_sts_v2');
+      formData.append('voice_settings', JSON.stringify({
+        stability: this.voiceSettings.stability,
+        similarity_boost: this.voiceSettings.similarityBoost,
+        style: this.voiceSettings.style,
+        use_speaker_boost: this.voiceSettings.useSpeakerBoost,
+      }));
+
+      // Make the Speech-to-Speech API call
+      const response = await axios.post(
+        `https://api.elevenlabs.io/v1/speech-to-speech/${targetVoiceId}`,
+        formData,
+        {
+          headers: {
+            ...formData.getHeaders(),
+            'xi-api-key': this.apiKey,
+          },
+          responseType: 'arraybuffer',
+          timeout: 120000, // 2 minute timeout for processing
+        }
+      );
+
+      // Save the converted audio
+      fs.writeFileSync(outputPath, Buffer.from(response.data));
+
+      // Get duration of the output
+      const duration = await this.getAudioDuration(outputPath);
+
+      console.log(`  ✓ Speech-to-Speech conversion complete: ${duration.toFixed(2)}s`);
+
+      return {
+        audioPath: outputPath,
+        duration,
+      };
+    } catch (error: any) {
+      const errorMsg = error.response?.data
+        ? Buffer.from(error.response.data).toString('utf8')
+        : error.message;
+      console.error('  ❌ Speech-to-Speech failed:', errorMsg);
+      throw new Error(`Speech-to-Speech conversion failed: ${errorMsg}`);
+    }
+  }
+
+  /**
+   * Speech-to-Speech for a video segment - extracts audio, converts, returns path
+   * Convenience method that handles the full flow for a single video segment
+   *
+   * @param videoPath - Path to the video file to extract audio from
+   * @param outputDir - Directory to save the converted audio
+   * @param segmentIndex - Index of the segment (for naming)
+   * @param voiceId - Optional voice ID override
+   */
+  async convertVideoAudioToVoice(
+    videoPath: string,
+    outputDir: string,
+    segmentIndex: number,
+    voiceId?: string
+  ): Promise<{ audioPath: string; duration: number }> {
+    const { execSync } = require('child_process');
+
+    // Step 1: Extract audio from video
+    const extractedAudioPath = path.join(outputDir, `extracted_audio_${segmentIndex}.mp3`);
+    console.log(`  📤 Extracting audio from segment ${segmentIndex}...`);
+
+    execSync(
+      `ffmpeg -i "${videoPath}" -vn -acodec libmp3lame -ab 192k -ar 44100 "${extractedAudioPath}" -y`,
+      { stdio: 'pipe' }
+    );
+
+    // Step 2: Convert using Speech-to-Speech
+    const convertedAudioPath = path.join(outputDir, `converted_audio_${segmentIndex}.mp3`);
+    const result = await this.speechToSpeech(extractedAudioPath, convertedAudioPath, voiceId);
+
+    // Step 3: Cleanup extracted audio (keep only converted)
+    if (fs.existsSync(extractedAudioPath)) {
+      fs.unlinkSync(extractedAudioPath);
+    }
+
+    return result;
+  }
 }

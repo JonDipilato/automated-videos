@@ -3,7 +3,12 @@ import { writeFile, mkdir, unlink } from 'fs/promises';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { portraitQueries } from '@/lib/db';
+// Import ConfigLoader first to ensure .env is loaded from parent directory
+import { ConfigLoader } from '../../../../src/utils/config';
 import { GCSStorageService } from '../../../../src/services/gcs-storage.service';
+
+// Force env loading by referencing ConfigLoader
+const _config = ConfigLoader;
 
 export async function POST(request: NextRequest) {
   try {
@@ -34,10 +39,19 @@ export async function POST(request: NextRequest) {
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
     await writeFile(localFilepath, buffer);
+    console.log(`✓ File saved locally: ${localFilepath}`);
+
+    // Verify GCS environment variables before upload
+    if (!process.env.GCS_BUCKET_NAME) {
+      console.error('GCS_BUCKET_NAME environment variable not set');
+      throw new Error('GCS_BUCKET_NAME is not configured. Please check your .env file.');
+    }
+    console.log(`✓ GCS_BUCKET_NAME: ${process.env.GCS_BUCKET_NAME}`);
 
     // Upload to GCS and get public URL
     const gcs = new GCSStorageService();
     const publicUrl = await gcs.uploadImage(localFilepath, filename);
+    console.log(`✓ Uploaded to GCS: ${publicUrl}`);
 
     // Delete local file after upload (optional - keep if you want local backup)
     // await unlink(localFilepath);
@@ -50,9 +64,14 @@ export async function POST(request: NextRequest) {
       filename,
       filepath: publicUrl  // Return the GCS public URL
     });
-  } catch (error) {
-    console.error('Portrait upload error:', error);
-    return NextResponse.json({ error: 'Upload failed' }, { status: 500 });
+  } catch (error: any) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('Portrait upload error:', errorMessage);
+    console.error('Full error:', error);
+    return NextResponse.json({
+      error: 'Upload failed',
+      details: errorMessage
+    }, { status: 500 });
   }
 }
 

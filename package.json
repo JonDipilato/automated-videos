@@ -7,6 +7,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
+    "dev:web": "cd web && npm run dev",
     "generate": "ts-node src/index.ts generate",
     "test": "jest",
     "test:timing": "ts-node test-timing.ts",

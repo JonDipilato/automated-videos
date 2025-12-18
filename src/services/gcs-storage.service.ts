@@ -51,21 +51,13 @@ export class GCSStorageService {
 
       console.log(`  ↳ Uploading to GCS: gs://${this.bucketName}/${destination}`);
 
-      // Upload file with timeout
-      const uploadPromise = this.storage.bucket(this.bucketName).upload(localFilePath, {
+      // Upload file directly - GCS SDK handles its own retries
+      await this.storage.bucket(this.bucketName).upload(localFilePath, {
         destination: destination,
         metadata: {
           cacheControl: 'public, max-age=3600',
         },
-        // Don't use legacy ACL (uniform bucket-level access is enabled)
       });
-
-      // Add 30 second timeout
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('GCS upload timed out after 30 seconds')), 30000);
-      });
-
-      await Promise.race([uploadPromise, timeoutPromise]);
 
       // Public access is managed via bucket-level IAM policy
       // No need to call makePublic() - bucket is already configured with allUsers objectViewer role

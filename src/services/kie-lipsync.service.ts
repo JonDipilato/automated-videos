@@ -58,16 +58,12 @@ export class KieLipSyncService {
   /**
    * Build the lip-sync prompt format that enables Grok's native speech
    *
-   * User-tested and confirmed working format:
-   * Line: "dialogue"
-   * Keep the original video motion, lip movement, expressions...
-   * Background: [enhanced spectacular description]
+   * Format: Line + lip sync instruction + Background
+   * Keep instructions minimal to avoid text rendering on video
    */
   buildLipSyncPrompt(dialogue: string, background: string): string {
     return `Line: "${dialogue}"
-Keep the original video motion, lip movement, expressions, and the speaker exactly as they are.
-Do NOT freeze the face or replace the speaker.
-Only modify the background environment behind or move with the person.
+Lip sync this dialogue with accurate mouth movements and natural expression.
 
 Background: ${background}`;
   }
